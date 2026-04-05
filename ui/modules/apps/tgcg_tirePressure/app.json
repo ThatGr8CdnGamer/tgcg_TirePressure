@@ -1,0 +1,22 @@
+{
+  "domElement": "<tgcgtirepressure></tgcgtirepressure>",
+  "name": "TGCG Tire Pressure",
+  "types": [
+    "ui.apps.categories.vehicle_info"
+  ],
+  "description": "TPMS-style tire pressure display with vehicle outline. Auto-detects wheel count. PSI/BAR/kPa toggle.",
+  "css": {
+    "left": "5px",
+    "bottom": "5px",
+    "height": "500px",
+    "width": "120px",
+    "min-width": "100px",
+    "min-height": "140px",
+    "max-width": "300px",
+    "max-height": "990px"
+  },
+  "preserveAspectRatio": false,
+  "author": "TGCG",
+  "version": "3.0",
+  "directive": "tgcgtirepressure"
+}

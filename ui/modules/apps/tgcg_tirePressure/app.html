@@ -1,0 +1,93 @@
+<div class="tp-app" ng-show="visible">
+  <link type="text/css" rel="stylesheet" href="/ui/modules/apps/tgcg_tirePressure/app.css">
+
+  <div class="tp-header">
+    <div class="tp-header-left">
+      <button class="tp-btn tp-collapse-btn" ng-click="toggleMain()">{{mainCollapsed ? '▶' : '▼'}}</button>
+      <button class="tp-btn" ng-click="cycleUnit()">{{unit}}</button>
+      <button class="tp-btn" ng-click="cycleTempUnit()">{{tempUnit}}</button>
+      <button class="tp-btn tp-refresh-btn" ng-click="manualRefresh()" title="Refresh wheel detection">↺</button>
+    </div>
+    <button class="tp-btn tp-preset-btn" ng-click="cyclePreset()" ng-class="'tp-preset-' + presetKey">{{presetLabel}}</button>
+  </div>
+
+
+  <!-- Axle rows -->
+  <div class="tp-layout" ng-hide="mainCollapsed">
+    <div class="tp-axle-row" ng-repeat="axle in axles track by $index">
+
+      <!-- Left side wheels (outer to inner) -->
+      <div class="tp-side tp-side-left">
+        <div class="tp-wheel" ng-repeat="w in axle.left" ng-class="w.status">
+          <div class="tp-wheel-label">{{w.label}}</div>
+          <div class="tp-wheel-body">
+            <span class="tp-value">{{w.display}}</span>
+            <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
+          </div>
+          <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
+        </div>
+      </div>
+
+      <!-- Center divider with axle label -->
+      <div class="tp-axle-divider">
+        <div class="tp-axle-label">{{axle.label}}</div>
+      </div>
+
+      <!-- Right side wheels (inner to outer) -->
+      <div class="tp-side tp-side-right">
+        <div class="tp-wheel tp-wheel-right" ng-repeat="w in axle.right" ng-class="w.status">
+          <div class="tp-wheel-label">{{w.label}}</div>
+          <div class="tp-wheel-body tp-wheel-body-right">
+            <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
+            <span class="tp-value">{{w.display}}</span>
+          </div>
+          <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- Trailer sections -->
+  <div class="tp-trailer-section" ng-repeat="section in trailerSections" ng-hide="mainCollapsed">
+    <!-- Trailer header: same layout as main header - label+collapse left, preset right -->
+    <div class="tp-header tp-trailer-header">
+      <div class="tp-header-left">
+        <span class="tp-trailer-label">TRAILER</span>
+        <button class="tp-btn tp-collapse-btn" ng-click="toggleTrailerSection(section.id)">
+          {{trailerCollapsed[section.id] ? '▶' : '▼'}}
+        </button>
+      </div>
+      <button class="tp-btn tp-preset-btn" ng-click="cycleTrailerPreset()" ng-class="'tp-preset-' + trailerPresetKey">{{trailerPresetLabel}}</button>
+    </div>
+
+    <div class="tp-layout" ng-hide="trailerCollapsed[section.id]">
+      <div class="tp-axle-row" ng-repeat="axle in section.axles track by $index">
+        <div class="tp-side tp-side-left">
+          <div class="tp-wheel tp-wheel-trailer" ng-repeat="w in axle.left" ng-class="w.status">
+            <div class="tp-wheel-label">{{w.label}}<span class="tp-dual-badge" ng-show="w.isDualHub">D</span></div>
+            <div class="tp-wheel-body">
+              <span class="tp-value">{{w.display}}</span>
+              <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
+            </div>
+            <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
+          </div>
+        </div>
+        <div class="tp-axle-divider">
+          <div class="tp-axle-label">{{axle.label}}</div>
+        </div>
+        <div class="tp-side tp-side-right">
+          <div class="tp-wheel tp-wheel-right tp-wheel-trailer" ng-repeat="w in axle.right" ng-class="w.status">
+            <div class="tp-wheel-label"><span class="tp-dual-badge" ng-show="w.isDualHub">D</span>{{w.label}}</div>
+            <div class="tp-wheel-body tp-wheel-body-right">
+              <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
+              <span class="tp-value">{{w.display}}</span>
+            </div>
+            <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>

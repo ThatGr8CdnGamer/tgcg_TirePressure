@@ -1,0 +1,194 @@
+.tp-app {
+  padding: 3px;
+  font-family: 'Consolas', 'Courier New', monospace;
+  color: #ddd;
+  width: 100%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: rgba(255,255,255,0.05);
+  border-radius: 3px;
+}
+.tp-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-shrink: 0;
+}
+.tp-header-left { display: flex; gap: 3px; }
+
+.tp-btn {
+  font-family: 'Consolas', 'Courier New', monospace;
+  font-size: 8px;
+  letter-spacing: 0.06em;
+  color: #bbb;
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 2px;
+  padding: 1px 5px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.tp-btn:hover { background: rgba(0,0,0,0.6); color: #fff; }
+.tp-preset-DRAG   { border-color: rgba(255,100,100,0.4); color: #ff8080; }
+.tp-preset-STREET { border-color: rgba(100,200,100,0.4); color: #80cc80; }
+.tp-preset-OFFROAD{ border-color: rgba(200,160,80,0.4);  color: #c8a050; }
+.tp-preset-HEAVY  { border-color: rgba(100,160,255,0.4); color: #80aaff; }
+
+
+
+/* Layout */
+.tp-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tp-axle-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  height: 38px;
+}
+
+.tp-side {
+  display: flex;
+  flex-direction: row;
+  flex: 1;
+  gap: 2px;
+  min-width: 0;
+}
+
+.tp-side-left  { justify-content: flex-end; }
+.tp-side-right { justify-content: flex-start; }
+
+.tp-axle-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  flex-shrink: 0;
+  position: relative;
+}
+.tp-axle-divider::before {
+  content: '';
+  position: absolute;
+  top: 0; bottom: 0;
+  left: 50%;
+  width: 1px;
+  background: rgba(255,255,255,0.08);
+}
+.tp-axle-label {
+  font-size: 6px;
+  color: #444;
+  letter-spacing: 0.06em;
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  transform: rotate(180deg);
+  position: relative;
+  z-index: 1;
+}
+
+/* Wheel tile */
+.tp-wheel {
+  background: rgba(0,0,0,0.4);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 3px;
+  padding: 2px 4px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  gap: 1px;
+}
+
+.tp-wheel-label { font-size: 6px; color: #444; letter-spacing: 0.08em; line-height: 1; }
+.tp-wheel-right .tp-wheel-label { text-align: right; }
+
+.tp-wheel-body {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px;
+}
+.tp-wheel-body-right { flex-direction: row-reverse; }
+
+.tp-value { font-size: 13px; font-weight: 700; color: #e8e8e8; line-height: 1; letter-spacing: -0.01em; }
+.tp-temp  { font-size: 10px; font-weight: 700; line-height: 1; }
+
+.tp-temp.temp-cold { color: #6ab0ff; }
+.tp-temp.temp-ok   { color: #6dcc88; }
+.tp-temp.temp-warm { color: #f0a830; }
+.tp-temp.temp-hot  { color: #e05050; }
+.tp-temp.temp-na   { color: #444; }
+
+.tp-wheel.warn { border-color: rgba(240,168,48,0.3); }
+.tp-wheel.warn .tp-value { color: #f0a830; }
+.tp-wheel.crit { border-color: rgba(224,80,80,0.35); }
+.tp-wheel.crit .tp-value { color: #e05050; }
+
+/* Trailer sections */
+.tp-trailer-header {
+  margin-top: 3px;
+  border-top: 1px solid rgba(255,180,50,0.2);
+  padding-top: 2px;
+}
+.tp-trailer-label {
+  font-size: 8px;
+  color: rgba(255,180,50,0.7);
+  letter-spacing: 0.1em;
+  font-weight: 700;
+}
+.tp-collapse-btn {
+  font-size: 7px;
+  padding: 1px 3px;
+  line-height: 1;
+  color: rgba(255,255,255,0.4);
+  border-color: rgba(255,255,255,0.08);
+}
+.tp-collapse-btn:hover { color: rgba(255,255,255,0.7); }
+.tp-wheel-trailer {
+  background: rgba(40,30,0,0.5);
+  border-color: rgba(255,180,50,0.12);
+}
+.tp-wheel-trailer.warn { border-color: rgba(240,168,48,0.4); }
+.tp-wheel-trailer.crit { border-color: rgba(224,80,80,0.4); }
+.tp-dual-badge {
+  font-size: 5px;
+  color: rgba(255,180,50,0.5);
+  letter-spacing: 0;
+  margin: 0 1px;
+  vertical-align: middle;
+}
+.tp-wheel.na .tp-value { color: #555; }
+.tp-wheel-trailer.na .tp-value { color: #554433; }
+
+.tp-wear-bar {
+  height: 2px;
+  background: rgba(255,255,255,0.07);
+  border-radius: 1px;
+  overflow: hidden;
+  margin-top: 1px;
+}
+.tp-wear-fill {
+  height: 100%;
+  border-radius: 1px;
+  transition: width 0.3s, background 0.3s;
+}
+
+.tp-refresh-btn {
+  opacity: 0.6;
+  font-size: 13px;
+  padding: 0 4px;
+  transition: opacity 0.2s, transform 0.2s;
+}
+.tp-refresh-btn:hover {
+  opacity: 1;
+  transform: rotate(30deg);
+}
+.tp-refresh-btn:active {
+  transform: rotate(180deg);
+}
