@@ -1,93 +1,254 @@
-<div class="tp-app" ng-show="visible">
+<!-- Settings popout panel — fixed, draggable, lives outside app widget -->
+<div class="tp-popout" ng-show="settingsOpen" ng-style="popoutStyle">
   <link type="text/css" rel="stylesheet" href="/ui/modules/apps/tgcg_tirePressure/app.css">
 
-  <div class="tp-header">
-    <div class="tp-header-left">
-      <button class="tp-btn tp-collapse-btn" ng-click="toggleMain()">{{mainCollapsed ? '▶' : '▼'}}</button>
-      <button class="tp-btn" ng-click="cycleUnit()">{{unit}}</button>
-      <button class="tp-btn" ng-click="cycleTempUnit()">{{tempUnit}}</button>
-      <button class="tp-btn tp-refresh-btn" ng-click="manualRefresh()" title="Refresh wheel detection">↺</button>
+  <div class="tp-popout-inner" ng-mousedown="startDrag($event)"
+    ng-style="{'transform': 'scale(' + popoutScale + ')', 'transform-origin': 'top left'}">
+
+    <div class="tp-settings-header">
+      <div class="tp-scale-btns">
+        <button class="tp-scale-btn" ng-mousedown="$event.stopPropagation()" ng-click="scaleDown()" title="Smaller">−</button>
+        <button class="tp-scale-btn" ng-mousedown="$event.stopPropagation()" ng-click="scaleUp()" title="Larger">+</button>
+      </div>
+      <span class="tp-settings-title">⚙ TGCG TYRE PRESSURE — SETTINGS</span>
+      <button class="tp-icon-btn" ng-mousedown="$event.stopPropagation()" ng-click="closeSettings()">✕</button>
     </div>
-    <button class="tp-btn tp-preset-btn" ng-click="cyclePreset()" ng-class="'tp-preset-' + presetKey">{{presetLabel}}</button>
-  </div>
 
+    <div class="tp-settings-body" ng-mousedown="$event.stopPropagation()">
 
-  <!-- Axle rows -->
-  <div class="tp-layout" ng-hide="mainCollapsed">
-    <div class="tp-axle-row" ng-repeat="axle in axles track by $index">
-
-      <!-- Left side wheels (outer to inner) -->
-      <div class="tp-side tp-side-left">
-        <div class="tp-wheel" ng-repeat="w in axle.left" ng-class="w.status">
-          <div class="tp-wheel-label">{{w.label}}</div>
-          <div class="tp-wheel-body">
-            <span class="tp-value">{{w.display}}</span>
-            <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
-          </div>
-          <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
-        </div>
-      </div>
-
-      <!-- Center divider with axle label -->
-      <div class="tp-axle-divider">
-        <div class="tp-axle-label">{{axle.label}}</div>
-      </div>
-
-      <!-- Right side wheels (inner to outer) -->
-      <div class="tp-side tp-side-right">
-        <div class="tp-wheel tp-wheel-right" ng-repeat="w in axle.right" ng-class="w.status">
-          <div class="tp-wheel-label">{{w.label}}</div>
-          <div class="tp-wheel-body tp-wheel-body-right">
-            <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
-            <span class="tp-value">{{w.display}}</span>
-          </div>
-          <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
-        </div>
-      </div>
-
-    </div>
-  </div>
-
-  <!-- Trailer sections -->
-  <div class="tp-trailer-section" ng-repeat="section in trailerSections" ng-hide="mainCollapsed">
-    <!-- Trailer header: same layout as main header - label+collapse left, preset right -->
-    <div class="tp-header tp-trailer-header">
-      <div class="tp-header-left">
-        <span class="tp-trailer-label">TRAILER</span>
-        <button class="tp-btn tp-collapse-btn" ng-click="toggleTrailerSection(section.id)">
-          {{trailerCollapsed[section.id] ? '▶' : '▼'}}
+      <div class="tp-section-header">LEGACY UI</div>
+      <div class="tp-setting-row">
+        <span class="tp-setting-label tp-has-tip" data-tip="Switch to the original full-header UI with all controls visible">USE LEGACY UI</span>
+        <button class="tp-toggle-btn" ng-class="{on: !settings.useNewUI}" ng-click="setSetting('useNewUI', !settings.useNewUI)">
+          {{!settings.useNewUI ? 'ON' : 'OFF'}}
         </button>
       </div>
-      <button class="tp-btn tp-preset-btn" ng-click="cycleTrailerPreset()" ng-class="'tp-preset-' + trailerPresetKey">{{trailerPresetLabel}}</button>
+
+      <div class="tp-section-header">SLIM UI</div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !settings.useNewUI}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Display unit for tyre pressure readings">PRESSURE</span>
+        <div class="tp-btn-group">
+          <button class="tp-seg-btn" ng-class="{active: settings.uIdx === 0}" ng-click="setUnit(0)">PSI</button>
+          <button class="tp-seg-btn" ng-class="{active: settings.uIdx === 1}" ng-click="setUnit(1)">BAR</button>
+          <button class="tp-seg-btn" ng-class="{active: settings.uIdx === 2}" ng-click="setUnit(2)">kPa</button>
+        </div>
+      </div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !settings.useNewUI}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Display unit for tyre and brake temperature">TEMPERATURE</span>
+        <div class="tp-btn-group">
+          <button class="tp-seg-btn" ng-class="{active: settings.tempUnitKey === 'C'}" ng-click="setTempUnit('C')">°C</button>
+          <button class="tp-seg-btn" ng-class="{active: settings.tempUnitKey === 'F'}" ng-click="setTempUnit('F')">°F</button>
+        </div>
+      </div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !settings.useNewUI || !depThermals}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Show tyre surface temperature. Requires Node Based Tire Wear mod.">SHOW TIRE TEMP <span class="tp-setting-hint" ng-show="!depThermals">— Node Based Tire Wear mod required</span></span>
+        <button class="tp-toggle-btn" ng-class="{on: settings.showTemp && depThermals}" ng-click="setSetting('showTemp', !settings.showTemp)">
+          {{(settings.showTemp && depThermals) ? 'ON' : 'OFF'}}
+        </button>
+      </div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !settings.useNewUI}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Show brake surface temperature on each wheel tile">SHOW BRAKE TEMP</span>
+        <button class="tp-toggle-btn" ng-class="{on: settings.showBrakeTemp}" ng-click="setSetting('showBrakeTemp', !settings.showBrakeTemp)">
+          {{settings.showBrakeTemp ? 'ON' : 'OFF'}}
+        </button>
+      </div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !depThermals}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Show tyre wear bar. Requires Node Based Tire Wear mod.">
+          SHOW WEAR <span class="tp-setting-hint" ng-show="!depThermals">— Node Based Tire Wear mod required</span>
+        </span>
+        <button class="tp-toggle-btn" ng-class="{on: settings.showWear && depThermals}" ng-disabled="!depThermals"
+          ng-click="setSetting('showWear', !settings.showWear)">
+          {{(settings.showWear && depThermals) ? 'ON' : 'OFF'}}
+        </button>
+      </div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !settings.useNewUI}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Warn/crit pressure thresholds used for this vehicle">PRESET</span>
+        <div class="tp-btn-group">
+          <button class="tp-preset-chip" ng-repeat="p in presetCycle"
+            ng-class="{active: settings.pIdx === $index}"
+            ng-style="{'border-color': presetBorderColor(p), 'color': settings.pIdx === $index ? '#e0e0e0' : presetColor(p)}"
+            ng-click="setPreset($index)"
+            data-tip="{{presetTooltip(p)}}">{{p}}</button>
+        </div>
+      </div>
+      <div class="tp-setting-subrow tp-custom-block" ng-show="presetCycle[settings.pIdx] === 'CUSTOM' && settings.useNewUI">
+        <div class="tp-custom-saved">
+          SAVED — WARN: <span class="tp-custom-val">{{settings.customWarnPsi}} PSI</span>
+          &nbsp;&nbsp;CRIT: <span class="tp-custom-val">{{settings.customCritPsi}} PSI</span>
+        </div>
+        <div class="tp-custom-inputs">
+          <span class="tp-setting-label tp-has-tip" data-tip="Pressure below this triggers a yellow warning">WARN</span>
+          <input class="tp-num-input" type="number" ng-model="settings.customWarnPsi" ng-change="onCustomPresetChange()" min="1" max="200">
+          <span class="tp-custom-unit">PSI</span>
+          <span class="tp-setting-label tp-has-tip" style="margin-left:6px" data-tip="Pressure below this triggers a red critical alert">CRIT</span>
+          <input class="tp-num-input" type="number" ng-model="settings.customCritPsi" ng-change="onCustomPresetChange()" min="1" max="200">
+          <span class="tp-custom-unit">PSI</span>
+        </div>
+      </div>
+      <div class="tp-setting-row" ng-class="{'tp-setting-disabled': !settings.useNewUI}">
+        <span class="tp-setting-label tp-has-tip" data-tip="Independent warn/crit thresholds for trailer tyres">TRAILER PRESET</span>
+        <div class="tp-btn-group">
+          <button class="tp-preset-chip" ng-repeat="p in trailerPresetCycle"
+            ng-class="{active: settings.tpIdx === $index}"
+            ng-style="{'border-color': presetBorderColor(p), 'color': settings.tpIdx === $index ? '#e0e0e0' : presetColor(p)}"
+            ng-click="setTrailerPreset($index)"
+            data-tip="{{presetTooltip(p)}}">{{p}}</button>
+        </div>
+      </div>
+
+      <div class="tp-section-header">VISIBILITY</div>
+      <div class="tp-setting-row">
+        <span class="tp-setting-label tp-has-tip" data-tip="Hides the app when neither the RaceTab tyre inflator nor the node damage mod is equipped">HIDE IF MODS INACTIVE</span>
+        <button class="tp-toggle-btn" ng-class="{on: settings.hideDep}" ng-click="setSetting('hideDep', !settings.hideDep)">
+          {{settings.hideDep ? 'ON' : 'OFF'}}
+        </button>
+      </div>
+      <div class="tp-setting-row">
+        <span class="tp-setting-label tp-has-tip" data-tip="Suppress the trailer section even when a trailer is coupled">HIDE TRAILER UI</span>
+        <button class="tp-toggle-btn" ng-class="{on: settings.hideTrailer}" ng-click="setSetting('hideTrailer', !settings.hideTrailer)">
+          {{settings.hideTrailer ? 'ON' : 'OFF'}}
+        </button>
+      </div>
+
+
+      <div class="tp-section-header">UI DESIGN</div>
+      <div class="tp-coming-soon">coming soon</div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Main app widget -->
+<div class="tp-app" ng-show="visible || pillVisible">
+  <link type="text/css" rel="stylesheet" href="/ui/modules/apps/tgcg_tirePressure/app.css">
+
+  <!-- First-launch hint toast -->
+  <div class="tp-toast" ng-show="showToast" ng-click="dismissToast()">
+    ⚙ Access settings via the gear icon
+  </div>
+
+  <!-- Hidden-state pill -->
+  <div class="tp-hidden-pill" ng-show="!visible" ng-class="{active: settingsOpen}" ng-click="toggleSettings()">
+    <span class="tp-pill-cog">⚙</span>
+  </div>
+
+  <!-- Main data view -->
+  <div class="tp-data-view" ng-show="visible">
+
+    <!-- NEW UI header -->
+    <div class="tp-header tp-header-slim" ng-show="settings.useNewUI">
+      <div class="tp-header-left-group">
+        <button class="tp-icon-btn tp-gear-btn" ng-click="toggleSettings()" data-tip="Settings">⚙</button>
+        <button class="tp-icon-btn tp-refresh-icon-btn" ng-click="manualRefresh()" data-tip="Re-detect wheels">↺</button>
+      </div>
+      <span class="tp-app-title">TYRE PRESSURE</span>
+      <button class="tp-icon-btn tp-min-btn" ng-click="toggleMain()">{{mainCollapsed ? '▶' : '▼'}}</button>
     </div>
 
-    <div class="tp-layout" ng-hide="trailerCollapsed[section.id]">
-      <div class="tp-axle-row" ng-repeat="axle in section.axles track by $index">
+    <!-- LEGACY UI header -->
+    <div class="tp-header" ng-hide="settings.useNewUI">
+      <div class="tp-header-left">
+        <button class="tp-btn tp-collapse-btn" ng-click="toggleMain()">{{mainCollapsed ? '▶' : '▼'}}</button>
+        <button class="tp-btn" ng-click="cycleUnit()">{{unitLabel}}</button>
+        <button class="tp-btn" ng-click="cycleTempUnit()">{{tempUnitLabel}}</button>
+        <button class="tp-btn tp-refresh-btn" ng-click="manualRefresh()" data-tip="Re-detect wheels">↺</button>
+        <button class="tp-icon-btn tp-gear-btn-legacy" ng-click="toggleSettings()" data-tip="Settings">⚙</button>
+      </div>
+      <button class="tp-btn tp-preset-btn" ng-click="cyclePreset()" ng-class="'tp-preset-' + presetKey">{{presetLabel}}</button>
+    </div>
+
+    <!-- Axle rows -->
+    <div class="tp-layout" ng-hide="mainCollapsed">
+      <div class="tp-axle-row" ng-repeat="axle in axles track by $index" ng-class="{'tp-axle-row-slim': settings.useNewUI}">
         <div class="tp-side tp-side-left">
-          <div class="tp-wheel tp-wheel-trailer" ng-repeat="w in axle.left" ng-class="w.status">
-            <div class="tp-wheel-label">{{w.label}}<span class="tp-dual-badge" ng-show="w.isDualHub">D</span></div>
-            <div class="tp-wheel-body">
-              <span class="tp-value">{{w.display}}</span>
-              <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
+          <div class="tp-wheel" ng-repeat="w in axle.left" ng-class="w.status">
+            <ng-container ng-if="!settings.useNewUI">
+              <div class="tp-wheel-label">{{w.label}}</div>
+              <div class="tp-wheel-body">
+                <span class="tp-value">{{w.display}}</span>
+                <span class="tp-temp" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span>
+              </div>
+            </ng-container>
+            <ng-container ng-if="settings.useNewUI">
+              <span class="tp-value tp-value-slim">{{w.display}}</span>
+              <div class="tp-slim-temps">
+                <span class="tp-temp-outer" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span>
+                <span class="tp-brake-inner" ng-class="w.brakeStatus" ng-show="settings.showBrakeTemp">B {{w.brakeDisplay}}</span>
+              </div>
+            </ng-container>
+            <div class="tp-wear-bar" ng-show="w.hasWear && settings.showWear && depThermals">
+              <div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div>
             </div>
-            <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
           </div>
         </div>
-        <div class="tp-axle-divider">
-          <div class="tp-axle-label">{{axle.label}}</div>
-        </div>
+        <div class="tp-axle-divider"><div class="tp-axle-label">{{axle.label}}</div></div>
         <div class="tp-side tp-side-right">
-          <div class="tp-wheel tp-wheel-right tp-wheel-trailer" ng-repeat="w in axle.right" ng-class="w.status">
-            <div class="tp-wheel-label"><span class="tp-dual-badge" ng-show="w.isDualHub">D</span>{{w.label}}</div>
-            <div class="tp-wheel-body tp-wheel-body-right">
-              <span class="tp-temp" ng-class="w.tempStatus">{{w.tempDisplay}}</span>
-              <span class="tp-value">{{w.display}}</span>
+          <div class="tp-wheel tp-wheel-right" ng-repeat="w in axle.right" ng-class="w.status">
+            <ng-container ng-if="!settings.useNewUI">
+              <div class="tp-wheel-label">{{w.label}}</div>
+              <div class="tp-wheel-body tp-wheel-body-right">
+                <span class="tp-temp" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span>
+                <span class="tp-value">{{w.display}}</span>
+              </div>
+            </ng-container>
+            <ng-container ng-if="settings.useNewUI">
+              <span class="tp-value tp-value-slim">{{w.display}}</span>
+              <div class="tp-slim-temps tp-slim-temps-right">
+                <span class="tp-brake-inner" ng-class="w.brakeStatus" ng-show="settings.showBrakeTemp">B {{w.brakeDisplay}}</span>
+                <span class="tp-temp-outer" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span>
+              </div>
+            </ng-container>
+            <div class="tp-wear-bar" ng-show="w.hasWear && settings.showWear && depThermals">
+              <div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div>
             </div>
-            <div class="tp-wear-bar" ng-show="w.hasWear"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
           </div>
         </div>
       </div>
     </div>
-  </div>
 
+    <!-- Trailer sections -->
+    <div class="tp-trailer-section" ng-repeat="section in trailerSections" ng-hide="mainCollapsed || settings.hideTrailer">
+      <div class="tp-header tp-trailer-header" ng-hide="settings.useNewUI">
+        <button class="tp-btn tp-collapse-btn" ng-click="toggleTrailerSection(section.id)">{{trailerCollapsed[section.id] ? '▶' : '▼'}}</button>
+        <span class="tp-trailer-label">TRAILER</span>
+        <button class="tp-btn tp-preset-btn" ng-click="cycleTrailerPreset()" ng-class="'tp-preset-' + trailerPresetKey">{{trailerPresetLabel}}</button>
+      </div>
+      <div class="tp-header tp-trailer-header" ng-show="settings.useNewUI">
+        <span class="tp-trailer-label">TRAILER</span>
+        <button class="tp-icon-btn tp-min-btn" ng-click="toggleTrailerSection(section.id)">{{trailerCollapsed[section.id] ? '▶' : '▼'}}</button>
+      </div>
+      <div class="tp-layout" ng-hide="trailerCollapsed[section.id]">
+        <div class="tp-axle-row" ng-repeat="axle in section.axles track by $index" ng-class="{'tp-axle-row-slim': settings.useNewUI}">
+          <div class="tp-side tp-side-left">
+            <div class="tp-wheel tp-wheel-trailer" ng-repeat="w in axle.left" ng-class="w.status">
+              <ng-container ng-if="!settings.useNewUI">
+                <div class="tp-wheel-label">{{w.label}}<span class="tp-dual-badge" ng-show="w.isDualHub">D</span></div>
+                <div class="tp-wheel-body"><span class="tp-value">{{w.display}}</span><span class="tp-temp" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span></div>
+              </ng-container>
+              <ng-container ng-if="settings.useNewUI">
+                <span class="tp-value tp-value-slim">{{w.display}}</span>
+                <div class="tp-slim-temps"><span class="tp-temp-outer" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span><span class="tp-brake-inner" ng-class="w.brakeStatus" ng-show="settings.showBrakeTemp">B {{w.brakeDisplay}}</span></div>
+              </ng-container>
+              <div class="tp-wear-bar" ng-show="w.hasWear && settings.showWear && depThermals"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
+            </div>
+          </div>
+          <div class="tp-axle-divider"><div class="tp-axle-label">{{axle.label}}</div></div>
+          <div class="tp-side tp-side-right">
+            <div class="tp-wheel tp-wheel-right tp-wheel-trailer" ng-repeat="w in axle.right" ng-class="w.status">
+              <ng-container ng-if="!settings.useNewUI">
+                <div class="tp-wheel-label"><span class="tp-dual-badge" ng-show="w.isDualHub">D</span>{{w.label}}</div>
+                <div class="tp-wheel-body tp-wheel-body-right"><span class="tp-temp" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span><span class="tp-value">{{w.display}}</span></div>
+              </ng-container>
+              <ng-container ng-if="settings.useNewUI">
+                <span class="tp-value tp-value-slim">{{w.display}}</span>
+                <div class="tp-slim-temps tp-slim-temps-right"><span class="tp-brake-inner" ng-class="w.brakeStatus" ng-show="settings.showBrakeTemp">B {{w.brakeDisplay}}</span><span class="tp-temp-outer" ng-class="w.tempStatus" ng-show="settings.showTemp && depThermals">T {{w.tempDisplay}}</span></div>
+              </ng-container>
+              <div class="tp-wear-bar" ng-show="w.hasWear && settings.showWear && depThermals"><div class="tp-wear-fill" ng-style="{width: w.wear, background: w.wearColor}"></div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /.tp-data-view -->
 </div>

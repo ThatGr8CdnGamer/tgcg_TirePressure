@@ -11,110 +11,434 @@ angular.module('beamng.apps')
         KPA: { label:'kPa', fromPa:0.001,                  toPa:1000,    max:350,  dec:0 },
       };
       var UNIT_CYCLE = ['PSI','BAR','KPA'];
-      var uIdx = 0;
-      scope.unit = 'PSI';
-
-      var TEMP_UNITS = { C: 'C°', F: 'F°' };
-      var tempUnitKey = 'C';
-      scope.tempUnit = 'C°';
-
-      scope.cycleTempUnit = function() {
-        tempUnitKey = tempUnitKey === 'C' ? 'F' : 'C';
-        scope.tempUnit = TEMP_UNITS[tempUnitKey];
-        refreshDisplay(); savePrefs();
-      };
-
-      function convertTemp(c) { return tempUnitKey === 'F' ? Math.round(c * 9/5 + 32) : Math.round(c); }
-      function tempStatus(c) {
-        if (c < 30)  return 'temp-cold';
-        if (c < 80)  return 'temp-ok';
-        if (c < 130) return 'temp-warm';
-        return 'temp-hot';
-      }
 
       // ── Presets ────────────────────────────────────────────────────
       var PRESETS = {
         STREET:  { label:'STREET',  warnPsi:26, critPsi:18 },
         OFFROAD: { label:'OFFROAD', warnPsi:15, critPsi:8  },
-        DRAG:    { label:'DRAG',    warnPsi:38, critPsi:32 },
+        DRAG:    { label:'DRAG',    warnPsi:14, critPsi:8  },
         HEAVY:   { label:'HEAVY',   warnPsi:85, critPsi:65 },
+        CUSTOM:  { label:'CUSTOM',  warnPsi:26, critPsi:18 },
       };
-      var PRESET_CYCLE = ['STREET','OFFROAD','DRAG','HEAVY'];
-      var pIdx = 0;
-      scope.presetKey   = 'STREET';
-      scope.presetLabel = 'STREET';
+      scope.presetCycle        = ['STREET','OFFROAD','DRAG','HEAVY','CUSTOM'];
+      scope.trailerPresetCycle = ['STREET','OFFROAD','DRAG','HEAVY'];
+      scope.refreshRateOptions = [
+        { v: 500,  l: '0.5s' },
+        { v: 1000, l: '1s'   },
+        { v: 2000, l: '2s'   },
+        { v: 5000, l: '5s'   },
+      ];
 
-      // Trailer has its own independent preset (defaults to STREET - most trailers spawn ~45 PSI)
-      var tpIdx = PRESET_CYCLE.indexOf('STREET');
-      scope.trailerPresetKey   = 'STREET';
-      scope.trailerPresetLabel = 'STREET';
-      scope.mainCollapsed = false;
-      scope.toggleMain = function() { scope.mainCollapsed = !scope.mainCollapsed; };
-
-      scope.manualRefresh = function() {
-        // Full wheel redetection - useful when loaner vehicles don't auto-detect
-        wCount = 0; metaRead = false; autoDetected = false;
-        rawPa = []; rawTemp = []; wheelStatus = {}; axleGroups = []; scope.axles = [];
-        if (lastElectrics) { delete lastElectrics.tp_newcount; }
-        
-        detectWheels();
-        // Retry a couple times in case wheels aren't ready yet
-        setTimeout(function() { if (wCount === 0) {  detectWheels(); } }, 500);
-        setTimeout(function() { if (wCount === 0) {  detectWheels(); } }, 1500);
+      // ── Settings defaults ─────────────────────────────────────────
+      // Global — shared across all vehicles
+      var GLOBAL_DEFAULTS = {
+        uIdx:         0,
+        tempUnitKey:  'F',
+        tpIdx:        0,
+        useNewUI:     true,
+        showTemp:     true,
+        showBrakeTemp:true,
+        showWear:     false,
+        refreshRate:  1000,
+        hideDep:      false,
+        hideTrailer:  false,
+        lastPresetKey:   'STREET',
+        lastCustomWarn:  26,
+        lastCustomCrit:  18,
       };
-
-      scope.trailerCollapsed = {}; // keyed by section id
-      scope.toggleTrailerSection = function(id) {
-        scope.trailerCollapsed[id] = !scope.trailerCollapsed[id];
-      };
-
-      scope.cycleTrailerPreset = function() {
-        tpIdx = (tpIdx + 1) % PRESET_CYCLE.length;
-        scope.trailerPresetKey   = PRESET_CYCLE[tpIdx];
-        scope.trailerPresetLabel = PRESETS[scope.trailerPresetKey].label;
-        refreshDisplay(); savePrefs();
+      // Per-vehicle — only preset selection and custom thresholds
+      var VEHICLE_DEFAULTS = {
+        presetKey:     null,   // null = use global lastPresetKey
+        customWarnPsi: null,   // null = use global lastCustomWarn
+        customCritPsi: null,   // null = use global lastCustomCrit
       };
 
-      var currentVehicleId = 'default';
-      function storageKey(vid) { return 'tp_prefs_' + (vid || 'default'); }
+      var GLOBAL_KEY  = 'tgcg_tp_global';
+      var globalPrefs = angular.copy(GLOBAL_DEFAULTS);
+      var vehiclePrefs = angular.copy(VEHICLE_DEFAULTS);
 
-      function savePrefs() {
+      // Convenience — scope.settings still used by HTML, maps to global+vehicle merged
+      var SETTINGS_DEFAULTS = {}; // kept for legacy compat, unused internally now
+      scope.settings = {};
+      function buildSettings() {
+        // Merge global into scope.settings
+        scope.settings.uIdx         = globalPrefs.uIdx;
+        scope.settings.tempUnitKey  = globalPrefs.tempUnitKey;
+        scope.settings.tpIdx        = globalPrefs.tpIdx;
+        scope.settings.useNewUI     = globalPrefs.useNewUI;
+        scope.settings.showTemp     = globalPrefs.showTemp;
+        scope.settings.showBrakeTemp= globalPrefs.showBrakeTemp;
+        scope.settings.showWear     = globalPrefs.showWear;
+        scope.settings.refreshRate  = globalPrefs.refreshRate;
+        scope.settings.hideDep      = globalPrefs.hideDep;
+        scope.settings.hideTrailer  = globalPrefs.hideTrailer;
+        // Per-vehicle preset — fall back to global lastPresetKey
+        var pKey = vehiclePrefs.presetKey || globalPrefs.lastPresetKey || 'STREET';
+        scope.settings.pIdx = scope.presetCycle.indexOf(pKey);
+        if (scope.settings.pIdx < 0) scope.settings.pIdx = 0;
+        // Custom PSI — per-vehicle if set, else global last used
+        scope.settings.customWarnPsi = vehiclePrefs.customWarnPsi != null
+          ? vehiclePrefs.customWarnPsi : (globalPrefs.lastCustomWarn || 26);
+        scope.settings.customCritPsi = vehiclePrefs.customCritPsi != null
+          ? vehiclePrefs.customCritPsi : (globalPrefs.lastCustomCrit || 18);
+        PRESETS.CUSTOM.warnPsi = scope.settings.customWarnPsi;
+        PRESETS.CUSTOM.critPsi = scope.settings.customCritPsi;
+      }
+      buildSettings();
+
+      // ── Derived display labels (kept in sync with settings) ───────
+      scope.unitLabel     = UNITS[UNIT_CYCLE[scope.settings.uIdx]].label;
+      scope.tempUnitLabel = scope.settings.tempUnitKey === 'C' ? 'C°' : 'F°';
+      scope.presetKey     = scope.presetCycle[scope.settings.pIdx];
+      scope.presetLabel   = PRESETS[scope.presetKey].label;
+
+      function syncDerivedLabels() {
+        scope.unitLabel     = UNITS[UNIT_CYCLE[scope.settings.uIdx]].label;
+        scope.tempUnitLabel = scope.settings.tempUnitKey === 'C' ? 'C°' : 'F°';
+        scope.presetKey     = scope.presetCycle[scope.settings.pIdx];
+        scope.presetLabel   = PRESETS[scope.presetKey].label;
+      }
+
+      // ── Preset helpers for settings HTML ─────────────────────────
+      var PRESET_COLORS_MAP = {
+        STREET:  { color: '#80cc80', border: 'rgba(100,200,100,0.4)' },
+        OFFROAD: { color: '#c8a050', border: 'rgba(200,160,80,0.4)'  },
+        DRAG:    { color: '#ff8080', border: 'rgba(255,100,100,0.4)' },
+        HEAVY:   { color: '#80aaff', border: 'rgba(100,160,255,0.4)' },
+        CUSTOM:  { color: '#c090ff', border: 'rgba(180,120,255,0.4)' },
+      };
+      scope.presetColor = function(p) {
+        return (PRESET_COLORS_MAP[p] || {}).color || '#888';
+      };
+      scope.presetBorderColor = function(p) {
+        return (PRESET_COLORS_MAP[p] || {}).border || 'rgba(255,255,255,0.06)';
+      };
+      scope.presetTooltip = function(p) {
+        if (p === 'CUSTOM') return 'Set your own warn and crit thresholds below';
+        var pr = PRESETS[p];
+        return pr ? 'WARN ' + pr.warnPsi + ' PSI  ·  CRIT ' + pr.critPsi + ' PSI' : '';
+      };
+      scope.onCustomPresetChange = function() {
+        PRESETS.CUSTOM.warnPsi = scope.settings.customWarnPsi;
+        PRESETS.CUSTOM.critPsi = scope.settings.customCritPsi;
+        vehiclePrefs.customWarnPsi = scope.settings.customWarnPsi;
+        vehiclePrefs.customCritPsi = scope.settings.customCritPsi;
+        globalPrefs.lastCustomWarn = scope.settings.customWarnPsi;
+        globalPrefs.lastCustomCrit = scope.settings.customCritPsi;
+        saveGlobal();
+        saveVehicle();
+        refreshDisplay();
+      };
+
+      // ── Dependency detection state ─────────────────────────────────
+      scope.depInflator  = false;
+      scope.depNodeDmg   = false;
+      scope.depThermals  = false;
+
+      // ── Toast ──────────────────────────────────────────────────────
+      scope.showToast  = false;
+      var toastTimer   = null;
+
+      scope.dismissToast = function() {
+        scope.showToast = false;
+        if (toastTimer) { clearTimeout(toastTimer); toastTimer = null; }
+      };
+
+      var TOAST_KEY = 'tgcg_tp_v2_seen';
+      function maybeShowToast() {
         try {
-          localStorage.setItem(storageKey(currentVehicleId), JSON.stringify({
-            pIdx: pIdx, uIdx: uIdx, tempUnitKey: tempUnitKey, tpIdx: tpIdx,
-          }));
+          if (!localStorage.getItem(TOAST_KEY)) {
+            scope.showToast = true;
+            localStorage.setItem(TOAST_KEY, '1');
+            toastTimer = setTimeout(function() {
+              scope.$evalAsync(function() { scope.showToast = false; });
+            }, 5000);
+          }
         } catch(e) {}
       }
 
-      function loadPrefs(vid) {
+      // ── Settings popout — draggable fixed panel ───────────────────
+      scope.settingsOpen  = false;
+      scope.pillVisible   = true; // always show app container so pill is accessible
+      scope.popoutStyle   = { top: '50%', left: '50%', transform: 'translateX(-50%) translateY(-50%)' };
+
+      var POPOUT_POS_KEY   = 'tgcg_tp_popout_pos';
+      var POPOUT_SCALE_KEY = 'tgcg_tp_popout_scale';
+      scope.popoutScale = 1.0;
+
+      function loadPopoutScale() {
         try {
-          var raw = localStorage.getItem(storageKey(vid));
-          if (!raw) return;
-          var p = JSON.parse(raw);
-          if (p.pIdx != null && p.pIdx < PRESET_CYCLE.length) { pIdx = p.pIdx; scope.presetKey = PRESET_CYCLE[pIdx]; scope.presetLabel = PRESETS[scope.presetKey].label; }
-          if (p.tpIdx != null && p.tpIdx < PRESET_CYCLE.length) { tpIdx = p.tpIdx; scope.trailerPresetKey = PRESET_CYCLE[tpIdx]; scope.trailerPresetLabel = PRESETS[scope.trailerPresetKey].label; }
-          if (p.uIdx != null && p.uIdx < UNIT_CYCLE.length)   { uIdx = p.uIdx; scope.unit = UNITS[UNIT_CYCLE[uIdx]].label; }
-          if (p.tempUnitKey) { tempUnitKey = p.tempUnitKey; scope.tempUnit = TEMP_UNITS[tempUnitKey]; }
+          var s = localStorage.getItem(POPOUT_SCALE_KEY);
+          if (s) scope.popoutScale = Math.min(3.0, Math.max(0.6, parseFloat(s)));
         } catch(e) {}
       }
+      function savePopoutScale(s) {
+        try { localStorage.setItem(POPOUT_SCALE_KEY, String(s)); } catch(e) {}
+      }
+      loadPopoutScale();
 
+      scope.scaleUp = function() {
+        scope.popoutScale = Math.min(3.0, Math.round((scope.popoutScale + 0.05) * 100) / 100);
+        savePopoutScale(scope.popoutScale);
+      };
+      scope.scaleDown = function() {
+        scope.popoutScale = Math.max(0.6, Math.round((scope.popoutScale - 0.05) * 100) / 100);
+        savePopoutScale(scope.popoutScale);
+      };
+
+      function loadPopoutPos() {
+        try {
+          var raw = localStorage.getItem(POPOUT_POS_KEY);
+          if (raw) {
+            var p = JSON.parse(raw);
+            scope.popoutStyle = { top: p.top, left: p.left, transform: 'none' };
+          }
+        } catch(e) {}
+      }
+      function savePopoutPos(top, left) {
+        try { localStorage.setItem(POPOUT_POS_KEY, JSON.stringify({ top: top, left: left })); } catch(e) {}
+      }
+
+      loadPopoutPos();
+
+      scope.toggleSettings = function() {
+        scope.settingsOpen = !scope.settingsOpen;
+      };
+      scope.openSettings  = function() { scope.settingsOpen = true; };
+      scope.closeSettings = function() { scope.settingsOpen = false; };
+
+      // Drag logic
+      scope.startDrag = function(e) {
+        if (e.target.tagName === 'BUTTON' || e.target.tagName === 'INPUT' ||
+            e.target.tagName === 'SELECT' || e.target.tagName === 'SPAN') return;
+        var startX = e.clientX;
+        var startY = e.clientY;
+        var el = document.querySelector('.tp-popout-inner');
+        if (!el) return;
+        var rect = el.getBoundingClientRect();
+        var startTop  = rect.top;
+        var startLeft = rect.left;
+
+        // Switch from transform-center to absolute coords
+        scope.popoutStyle = { top: startTop + 'px', left: startLeft + 'px', transform: 'none' };
+        scope.$evalAsync(function(){});
+
+        function onMove(me) {
+          var newTop  = startTop  + (me.clientY - startY);
+          var newLeft = startLeft + (me.clientX - startX);
+          // Clamp to viewport
+          newTop  = Math.max(0, Math.min(newTop,  window.innerHeight - 100));
+          newLeft = Math.max(0, Math.min(newLeft, window.innerWidth  - 100));
+          scope.$evalAsync(function() {
+            scope.popoutStyle = { top: newTop + 'px', left: newLeft + 'px', transform: 'none' };
+          });
+        }
+        function onUp(ue) {
+          document.removeEventListener('mousemove', onMove);
+          document.removeEventListener('mouseup', onUp);
+          var finalEl = document.querySelector('.tp-popout-inner');
+          if (finalEl) {
+            var r = finalEl.getBoundingClientRect();
+            savePopoutPos(r.top + 'px', r.left + 'px');
+          }
+        }
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
+      };
+
+      var GLOBAL_KEYS = ['uIdx','tempUnitKey','tpIdx','useNewUI','showTemp','showBrakeTemp',
+                         'showWear','refreshRate','hideDep','hideTrailer'];
+
+      scope.setSetting = function(key, val) {
+        scope.settings[key] = val;
+        if (GLOBAL_KEYS.indexOf(key) >= 0) {
+          globalPrefs[key] = val;
+          saveGlobal();
+        }
+        syncDerivedLabels();
+        if (key === 'hideDep' || key === 'useNewUI') { updateVisibility(); }
+        if (key === 'showTemp' || key === 'showBrakeTemp' || key === 'showWear') { refreshDisplay(); }
+      };
+
+      scope.setUnit = function(idx) {
+        scope.settings.uIdx = idx;
+        globalPrefs.uIdx = idx;
+        syncDerivedLabels();
+        refreshDisplay();
+        saveGlobal();
+      };
+
+      scope.setTempUnit = function(key) {
+        scope.settings.tempUnitKey = key;
+        globalPrefs.tempUnitKey = key;
+        syncDerivedLabels();
+        refreshDisplay();
+        saveGlobal();
+      };
+
+      scope.setPreset = function(idx) {
+        scope.settings.pIdx = idx;
+        var pKey = scope.presetCycle[idx];
+        vehiclePrefs.presetKey = pKey;
+        globalPrefs.lastPresetKey = pKey;
+        PRESETS.CUSTOM.warnPsi = scope.settings.customWarnPsi;
+        PRESETS.CUSTOM.critPsi = scope.settings.customCritPsi;
+        syncDerivedLabels();
+        refreshDisplay();
+        saveGlobal();
+        saveVehicle();
+      };
+
+      scope.setTrailerPreset = function(idx) {
+        scope.settings.tpIdx = idx;
+        globalPrefs.tpIdx = idx;
+        refreshDisplay();
+        saveGlobal();
+      };
+
+      scope.onRefreshRateChange = function() {
+        globalPrefs.refreshRate = Number(scope.settings.refreshRate) || 1000;
+        saveGlobal();
+        restartPoll();
+      };
+
+      // Legacy cycle helpers (used by legacy UI buttons)
       scope.cycleUnit = function() {
-        uIdx = (uIdx + 1) % UNIT_CYCLE.length;
-        scope.unit = UNITS[UNIT_CYCLE[uIdx]].label;
-        updateCustomDisplay(); refreshDisplay(); savePrefs();
+        scope.setUnit((scope.settings.uIdx + 1) % UNIT_CYCLE.length);
+      };
+      scope.cycleTempUnit = function() {
+        scope.setTempUnit(scope.settings.tempUnitKey === 'C' ? 'F' : 'C');
       };
       scope.cyclePreset = function() {
-        pIdx = (pIdx + 1) % PRESET_CYCLE.length;
-        scope.presetKey = PRESET_CYCLE[pIdx]; scope.presetLabel = PRESETS[scope.presetKey].label;
-        refreshDisplay(); savePrefs();
+        scope.setPreset((scope.settings.pIdx + 1) % scope.presetCycle.length);
       };
+      scope.cycleTrailerPreset = function() {
+        scope.setTrailerPreset((scope.settings.tpIdx + 1) % scope.presetCycle.length);
+      };
+
+      // Legacy trailer preset label helpers (used by legacy UI button)
+      scope.trailerPresetKey   = scope.presetCycle[scope.settings.tpIdx];
+      scope.trailerPresetLabel = PRESETS[scope.trailerPresetKey].label;
+
+      // Keep trailer labels in sync — patch setTrailerPreset
+      var _origSetTrailerPreset = scope.setTrailerPreset;
+      scope.setTrailerPreset = function(idx) {
+        _origSetTrailerPreset(idx);
+        scope.trailerPresetKey   = scope.presetCycle[scope.settings.tpIdx];
+        scope.trailerPresetLabel = PRESETS[scope.trailerPresetKey].label;
+      };
+
+      // ── Preset tooltip + chip style helpers (used by settings HTML) ──
+      scope.presetTooltip = function(p) {
+        if (p === 'CUSTOM') return 'Set your own warn and crit thresholds below';
+        var d = PRESETS[p];
+        return 'WARN ' + d.warnPsi + ' PSI  \u00b7  CRIT ' + d.critPsi + ' PSI';
+      };
+
+      var PRESET_CHIP_COLORS = {
+        STREET:  { border: 'rgba(100,200,100,0.4)', color: '#80cc80' },
+        OFFROAD: { border: 'rgba(200,160,80,0.4)',  color: '#c8a050' },
+        DRAG:    { border: 'rgba(255,100,100,0.4)', color: '#ff8080' },
+        HEAVY:   { border: 'rgba(100,160,255,0.4)', color: '#80aaff' },
+        CUSTOM:  { border: 'rgba(180,120,255,0.4)', color: '#c090ff' },
+      };
+      scope.presetChipStyle = function(p, isActive) {
+        var c = PRESET_CHIP_COLORS[p] || {};
+        return {
+          'color':            isActive ? '#e0e0e0' : c.color,
+          'background':       isActive ? 'rgba(255,255,255,0.10)' : 'rgba(0,0,0,0.4)',
+          'border':           '1px solid ' + (isActive ? 'rgba(255,255,255,0.18)' : c.border),
+        };
+      };
+      scope.presetColor = function(p) {
+        return (PRESET_CHIP_COLORS[p] || {}).color || '#888';
+      };
+      scope.presetBorderColor = function(p) {
+        return (PRESET_CHIP_COLORS[p] || {}).border || 'rgba(255,255,255,0.06)';
+      };
+
+      // ── Prefs persistence ──────────────────────────────────────────
+      var currentVehicleId = 'default';
+      function vehicleKey(vid) { return 'tgcg_tp_vehicle_' + (vid || 'default'); }
+
+      scope.savePrefs = function() { savePrefs(); };
+
+      function saveGlobal() {
+        try { localStorage.setItem(GLOBAL_KEY, JSON.stringify(globalPrefs)); } catch(e) {}
+      }
+      function saveVehicle() {
+        try { localStorage.setItem(vehicleKey(currentVehicleId), JSON.stringify(vehiclePrefs)); } catch(e) {}
+      }
+      function savePrefs() { saveGlobal(); saveVehicle(); }
+
+      function loadGlobal() {
+        try {
+          var raw = localStorage.getItem(GLOBAL_KEY);
+          if (!raw) {
+            // Migrate from old per-vehicle format if present
+            var oldRaw = localStorage.getItem('tp_prefs_default');
+            if (oldRaw) {
+              var old = JSON.parse(oldRaw);
+              if (old.uIdx  != null) globalPrefs.uIdx         = old.uIdx;
+              if (old.tempUnitKey)   globalPrefs.tempUnitKey   = old.tempUnitKey;
+              if (old.tpIdx != null) globalPrefs.tpIdx         = old.tpIdx;
+              if (old.useNewUI != null) globalPrefs.useNewUI   = old.useNewUI;
+              if (old.showTemp != null) globalPrefs.showTemp   = old.showTemp;
+              if (old.showBrakeTemp != null) globalPrefs.showBrakeTemp = old.showBrakeTemp;
+              if (old.showWear != null) globalPrefs.showWear   = old.showWear;
+              if (old.refreshRate)   globalPrefs.refreshRate   = Number(old.refreshRate) || 1000;
+              if (old.hideDep != null) globalPrefs.hideDep     = old.hideDep;
+              if (old.hideTrailer != null) globalPrefs.hideTrailer = old.hideTrailer;
+            }
+            return;
+          }
+          var g = JSON.parse(raw);
+          globalPrefs = angular.merge({}, GLOBAL_DEFAULTS, g);
+          globalPrefs.refreshRate = Number(globalPrefs.refreshRate) || 1000;
+          if (globalPrefs.tpIdx >= scope.trailerPresetCycle.length) globalPrefs.tpIdx = 0;
+          if (globalPrefs.uIdx  >= UNIT_CYCLE.length) globalPrefs.uIdx = 0;
+        } catch(e) {}
+      }
+
+      function loadVehicle(vid) {
+        try {
+          vehiclePrefs = angular.copy(VEHICLE_DEFAULTS);
+          var raw = localStorage.getItem(vehicleKey(vid));
+          if (!raw) {
+            // No per-vehicle data — also check old format
+            var oldRaw = localStorage.getItem('tp_prefs_' + vid);
+            if (oldRaw) {
+              var old = JSON.parse(oldRaw);
+              var pk = scope.presetCycle[old.pIdx];
+              if (pk) vehiclePrefs.presetKey = pk;
+              if (old.customWarnPsi != null) vehiclePrefs.customWarnPsi = old.customWarnPsi;
+              if (old.customCritPsi != null) vehiclePrefs.customCritPsi = old.customCritPsi;
+            }
+            return;
+          }
+          var v = JSON.parse(raw);
+          if (v.presetKey && scope.presetCycle.indexOf(v.presetKey) >= 0) vehiclePrefs.presetKey = v.presetKey;
+          if (v.customWarnPsi != null) vehiclePrefs.customWarnPsi = v.customWarnPsi;
+          if (v.customCritPsi != null) vehiclePrefs.customCritPsi = v.customCritPsi;
+        } catch(e) {}
+      }
+
+      // Initial load
+      loadGlobal();
 
       // ── Hysteresis ─────────────────────────────────────────────────
       var HYSTERESIS_PSI = 1.5;
       var wheelStatus = {};
 
-      function getStatus(pa, id, presetOverride) {
-        var preset = presetOverride || PRESETS[scope.presetKey];
+      function activePreset(isTrailer) {
+        var key = isTrailer
+          ? scope.presetCycle[scope.settings.tpIdx]
+          : scope.presetCycle[scope.settings.pIdx];
+        return PRESETS[key] || PRESETS.STREET;
+      }
+
+      function getStatus(pa, id, isTrailer) {
+        var preset = activePreset(isTrailer);
         var psi    = pa * UNITS.PSI.fromPa;
         var cur    = wheelStatus[id] || 'ok';
         var next;
@@ -125,74 +449,120 @@ angular.module('beamng.apps')
         return next;
       }
 
-
       // ── State ──────────────────────────────────────────────────────
       var rawPa        = [];
-      var rawTemp      = []; // per-wheel surface temp in °C, from Lua fallback
+      var rawTemp      = [];
+      var rawBrakeTemp = [];
       var thermals     = {};
       var wCount       = 0;
       var axleGroups   = [];
       var metaRead     = false;
       var metaTimer    = null;
       var autoDetected = false;
-      var trailerData  = {}; // keyed by trailer vehicle ID string
-      var lastTrailerCount = 0;  // detect coupling/uncoupling immediately
-      var knownTrailerIds = {}; // vehicle IDs seen as trailers - suppresses rebuild when focused on them
-      var focusedOnTrailer = false; // true when focused on a known trailer vehicle
-      var focusedVehicleId = null; // ID from VehicleFocusChanged - used to target correct vehicle in detectWheels
-      var disabledTrailerIds = {}; // sticky: trailer IDs whose fw=0 (disconnected from chain)
-      var connectedTrailerIds = {}; // trailer IDs that have confirmed fw=1 at least once
-      var lastElectrics = null;
-      var lastTrailerSectionCount = 0; // for RD change logging
-      var trailerSuppressUntil = 0;   // epoch ms; processTrailerElectrics no-ops until this passes
+      var trailerData  = {};
+      var lastTrailerCount     = 0;
+      var knownTrailerIds      = {};
+      var focusedOnTrailer     = false;
+      var focusedVehicleId     = null;
+      var disabledTrailerIds   = {};
+      var connectedTrailerIds  = {};
+      var lastElectrics        = null;
+      var trailerSuppressUntil = 0;
 
-      scope.axles            = [];
-      scope.trailerSections  = [];
-      scope.visible          = false;
+      scope.axles           = [];
+      scope.trailerSections = [];
+      scope.visible         = false;
+      scope.mainCollapsed   = false;
+      scope.trailerCollapsed = {};
+
+      scope.toggleMain = function() { scope.mainCollapsed = !scope.mainCollapsed; };
+      scope.toggleTrailerSection = function(id) { scope.trailerCollapsed[id] = !scope.trailerCollapsed[id]; };
+
+      scope.manualRefresh = function() {
+        wCount = 0; metaRead = false; autoDetected = false;
+        rawPa = []; rawTemp = []; wheelStatus = {}; axleGroups = []; scope.axles = [];
+        if (lastElectrics) { delete lastElectrics.tp_newcount; }
+        detectWheels();
+        setTimeout(function() { if (wCount === 0) detectWheels(); }, 500);
+        setTimeout(function() { if (wCount === 0) detectWheels(); }, 1500);
+      };
+
+      // ── Visibility (dep filter + unicycle) ─────────────────────────
+      var isUnicycle   = false;
+      var rawVisible   = false; // true when vehicle electrics are live
+
+      function updateVisibility() {
+        if (!rawVisible)    { scope.visible = false; return; }
+        if (isUnicycle)     { scope.visible = false; return; }
+        if (scope.settings.hideDep && !scope.depInflator && !scope.depNodeDmg) {
+          scope.visible = false; return;
+        }
+        scope.visible = true;
+      }
 
       // ── Display ────────────────────────────────────────────────────
       function fmtVal(pa) {
-        var u = UNITS[UNIT_CYCLE[uIdx]];
+        var u = UNITS[UNIT_CYCLE[scope.settings.uIdx]];
         var v = pa * u.fromPa;
         return u.dec > 0 ? v.toFixed(u.dec) : Math.round(v).toString();
       }
 
-      function buildWheelObj(w, paSource, thermSource, presetOverride) {
-        var paArr = paSource  || rawPa;
-        var thArr = thermSource || thermals;
-        var paRaw = paArr[w.idx];
-        var noData = (paRaw === -1);          // sentinel: wheel exists but has no pressure group
-        var pa    = (paRaw == null || noData) ? 0 : paRaw;
-        var therm = thArr[w.name] || thArr[w.idx] || null;
-        // Always show temp: use tireThermalData surfaceTemp if available, fall back to rawTemp
-        var tempC = therm ? therm.surfaceTemp : (rawTemp[w.idx] != null ? rawTemp[w.idx] : null);
-        var wearPct = therm ? Math.max(0, 100 - therm.wheelDam) : null;
+      function convertTemp(c) {
+        return scope.settings.tempUnitKey === 'F' ? Math.round(c * 9/5 + 32) : Math.round(c);
+      }
+
+      function tempStatus(c) {
+        if (c < 30)  return 'temp-cold';
+        if (c < 80)  return 'temp-ok';
+        if (c < 130) return 'temp-warm';
+        return 'temp-hot';
+      }
+
+      function brakeStatus(c) {
+        if (c < 80)  return 'brake-ok';
+        if (c < 300) return 'brake-warm';
+        if (c < 600) return 'brake-hot';
+        return 'brake-crit';
+      }
+
+      function buildWheelObj(w, paSource, thermSource, isTrailer) {
+        var paArr  = paSource   || rawPa;
+        var thArr  = thermSource || thermals;
+        var paRaw  = paArr[w.idx];
+        var noData = (paRaw === -1);
+        var pa     = (paRaw == null || noData) ? 0 : paRaw;
+        var therm  = thArr[w.name] || thArr[w.idx] || null;
+        var tempC     = (therm && therm.surfaceTemp != null) ? therm.surfaceTemp : (rawTemp[w.idx] != null ? rawTemp[w.idx] : null);
+        var brakeC    = rawBrakeTemp[w.idx] != null ? rawBrakeTemp[w.idx] : null;
+        var wearPct   = (therm && therm.wheelDam != null) ? Math.max(0, 100 - therm.wheelDam) : null;
         return {
-          label:       w.name || (w.idx % 2 === 0 ? 'R' : 'L') + Math.floor(w.idx / 2),
-          display:     noData ? 'N/A' : fmtVal(pa),
-          status:      noData ? 'na'  : getStatus(pa, w.idx, presetOverride),
-          isDualHub:   !!w.isDual,
-          tempDisplay: tempC != null ? convertTemp(tempC) + '°' : '--°',
-          tempStatus:  tempC != null ? tempStatus(tempC) : 'temp-na',
-          hasWear:     wearPct !== null,
-          wear:        wearPct !== null ? wearPct + '%' : '0%',
-          wearColor:   wearPct !== null ? (wearPct > 70 ? '#4caf50' : wearPct > 40 ? '#ffeb3b' : '#f44336') : '#333',
+          label:            w.name || (w.idx % 2 === 0 ? 'R' : 'L') + Math.floor(w.idx / 2),
+          display:          noData ? 'N/A' : fmtVal(pa),
+          status:           noData ? 'na'  : getStatus(pa, w.idx, !!isTrailer),
+          isDualHub:        !!w.isDual,
+          tempDisplay:      tempC  != null ? convertTemp(tempC)  + '°' : '--°',
+          tempStatus:       tempC  != null ? tempStatus(tempC)  : 'temp-na',
+          brakeDisplay:     brakeC != null ? convertTemp(brakeC) + '°' : '--°',
+          brakeStatus:      brakeC != null ? brakeStatus(brakeC) : 'brake-na',
+          hasWear:          wearPct !== null,
+          wear:             wearPct !== null ? wearPct + '%' : '0%',
+          wearColor:        wearPct !== null ? (wearPct > 70 ? '#4caf50' : wearPct > 40 ? '#ffeb3b' : '#f44336') : '#333',
         };
       }
+
+      function updateCustomDisplay() { /* unit change already triggers fmtVal via refreshDisplay */ }
 
       function refreshDisplay() {
         scope.axles = axleGroups.map(function(axle) {
           return {
             label: axle.label,
-            left:  axle.left.map(function(w)  { return buildWheelObj(w, rawPa, thermals); }),
-            right: axle.right.map(function(w) { return buildWheelObj(w, rawPa, thermals); }),
+            left:  axle.left.map(function(w)  { return buildWheelObj(w, rawPa, thermals, false); }),
+            right: axle.right.map(function(w) { return buildWheelObj(w, rawPa, thermals, false); }),
           };
         }).filter(function(axle) {
-          // Drop axles missing wheels on one side entirely (spare mounts, aux wheels, etc.)
           return axle.left.length > 0 && axle.right.length > 0;
         });
 
-        // Trailer sections sorted by order
         scope.trailerSections = Object.keys(trailerData)
           .sort(function(a,b) { return (trailerData[a].order||0) - (trailerData[b].order||0); })
           .map(function(tid) {
@@ -201,43 +571,20 @@ angular.module('beamng.apps')
             var axleRows = td.axleGroups.map(function(axle) {
               return {
                 label: axle.label,
-                left:  axle.left.map(function(w)  { return buildWheelObj(w, td.rawPa, {}, PRESETS[scope.trailerPresetKey]); }),
-                right: axle.right.map(function(w) { return buildWheelObj(w, td.rawPa, {}, PRESETS[scope.trailerPresetKey]); }),
+                left:  axle.left.map(function(w)  { return buildWheelObj(w, td.rawPa, {}, true); }),
+                right: axle.right.map(function(w) { return buildWheelObj(w, td.rawPa, {}, true); }),
               };
             }).filter(function(axle) {
-              // Drop axles where every tile is N/A - these are non-tire wheels (spare/dolly/coupler)
               var allNA = axle.left.concat(axle.right).every(function(w) { return w.status === 'na'; });
               return !allNA;
             });
             return { id: tid, axles: axleRows };
           }).filter(Boolean);
-        // Diagnostic: log whenever trailer section count changes, including axle/wheel counts
-        var _tsc = scope.trailerSections.length;
-        if (_tsc !== lastTrailerSectionCount) {
-          var _tdkeys = Object.keys(trailerData);
-          var _axleInfo = scope.trailerSections.map(function(s) {
-            return s.id+":axles="+s.axles.length+"("+s.axles.map(function(a){return "L"+a.left.length+"R"+a.right.length;}).join(",")+")";
-          });
-          console.log("RD: trailerSections "+lastTrailerSectionCount+"->"+_tsc+" td="+JSON.stringify(_tdkeys)+" "+_axleInfo.join(" "));
-          lastTrailerSectionCount = _tsc;
-        }
-
       }
 
       // ── Wheel name parsing ─────────────────────────────────────────
       function parseWheelName(name) {
         if (!name) return null;
-        // Pre-process axle prefix conventions to an axleOffset + simplified name:
-        //
-        // 1. Underscore prefix: R_RL1, F_FL, R_R_RL1
-        //    Each [Type]_ adds 100. R_RL1 → axleOffset=100, parseName='RL1'
-        //
-        // 2. Repeated type-char prefix WITHOUT underscore: FFR, FFL, RRL, RRR
-        //    e.g. FFR (front-front-right), RRL (rear-rear-left)
-        //    Strip all but one leading repeated char. FF→F+100, FFF→F+200, RR→R+100
-        //    FFR → axleOffset=100, parseName='FR'
-        //    RRL → axleOffset=100, parseName='RL' (correctly makes it left side)
-        //    RRR → axleOffset=100, parseName='RR' (second rear axle right outer)
         var axleOffset = 0;
         var parseName = name;
         var um = name.match(/^((?:[FRMfrm]_)+)(.+)$/i);
@@ -245,10 +592,6 @@ angular.module('beamng.apps')
           axleOffset = um[1].replace(/_/g, '').length * 100;
           parseName = um[2];
         } else {
-          // Repeated char prefix: ^(X)(X+)(rest) where X is a type char and rest is non-empty
-          // e.g. FFR→front_101/right, RRL→rear_101/left
-          // BUT only apply if the simplified name matches the main regex - otherwise
-          // "RR1" is rear+right+dual1, not a repeated-R prefix producing "R1" with no side char.
           var rm = name.match(new RegExp('^(([FRMfrmlL])\\2+)(.+)$', 'i'));
           if (rm) {
             var candidateName = rm[2] + rm[3];
@@ -257,41 +600,27 @@ angular.module('beamng.apps')
               axleOffset = (rm[1].length - 1) * 100;
               parseName = candidateName;
             }
-            // else: fall through, parse original name directly (e.g. RR1 = rear right inner-dual-1)
           }
         }
-        // Handles multiple BeamNG naming conventions:
-        // 1. FL, FR, RL, RR                          (simple: no axle num)
-        // 2. R1L, R1LL, R2R, R2RR                    (digit axle num + dual suffix)
-        // 3. RL2, RR2                                 (digit as dual suffix)
-        // 4. ROL, ROLL, ROR, RORR                     (letter axle id e.g. O=outer/0)
-        // 5. 1FL, 2RL etc.                            (leading digit axle num)
-        // axle_id: digits (R1L, R2LL) OR single non-LR letter (ROL, ROLL) - not greedy into side char
         var m = parseName.match(/^(\d*)([FRMfrmlL])(\d+|[^LRlrFRMfrmlL\d]?)([LRlr])([LRlr\d]?)$/i);
         if (m) {
-          var typeChar   = m[2].toUpperCase();
-          var axleId     = m[3] || '';           // may be '', '1', '2', 'O', 'I' etc.
-          var sideChar   = m[4].toUpperCase();
-          var suffix     = m[5] || '';
-          var leadNum    = m[1] || '';
-
-          // Derive numeric axle number for sorting:
-          // leading digit > trailing digit in axleId > letter mapped (O/0=0, I=1, others by char)
-          var axleNum = 1;
+          var typeChar = m[2].toUpperCase();
+          var axleId   = m[3] || '';
+          var sideChar = m[4].toUpperCase();
+          var suffix   = m[5] || '';
+          var leadNum  = m[1] || '';
+          var axleNum  = 1;
           if (leadNum) {
             axleNum = parseInt(leadNum);
           } else if (/^\d+$/.test(axleId)) {
             var parsed = parseInt(axleId);
-            axleNum = isNaN(parsed) ? 1 : parsed; // 0 is valid!
+            axleNum = isNaN(parsed) ? 1 : parsed;
           } else if (axleId) {
-            // Map letter axle IDs: O -> 0 -> sort as 1, F/A/B/C... alphabetically
             var c = axleId.toUpperCase().charCodeAt(0);
-            axleNum = (axleId.toUpperCase() === 'O') ? 0 : c - 64; // A=1, B=2...
+            axleNum = (axleId.toUpperCase() === 'O') ? 0 : c - 64;
           }
-
-          var side = sideChar === 'L' ? 'left' : 'right';
-          var type = typeChar === 'F' ? 'front' : typeChar === 'R' ? 'rear' : typeChar === 'L' ? 'lift' : 'mid';
-          // Inner dual: doubled side letter (RLL, ROLL) OR trailing digit >= 2 (RL2)
+          var side    = sideChar === 'L' ? 'left' : 'right';
+          var type    = typeChar === 'F' ? 'front' : typeChar === 'R' ? 'rear' : typeChar === 'L' ? 'lift' : 'mid';
           var isInner = (suffix.toUpperCase() === sideChar) || /^[2-9]$/.test(suffix);
           return { type: type, axleNum: axleNum + axleOffset, side: side, dualPos: isInner ? 'inner' : 'outer' };
         }
@@ -299,9 +628,7 @@ angular.module('beamng.apps')
       }
 
       function buildAxleGroups(wheelMeta) {
-        // Filter spare tire: if odd count, drop the last wheel
         if (wheelMeta.length % 2 !== 0) {
-          console.log('TPRES: odd wheel count (' + wheelMeta.length + '), dropping last wheel as spare');
           wheelMeta = wheelMeta.slice(0, wheelMeta.length - 1);
         }
         var groups  = {};
@@ -315,7 +642,6 @@ angular.module('beamng.apps')
               var lbl = typeChar + (p.axleNum === 0 ? 'O' : p.axleNum > 1 ? p.axleNum : '');
               groups[key] = { label: lbl, sortKey: 0, posYSum: 0, posYCount: 0, left: [], right: [] };
             }
-            // Accumulate posY to compute average for physical sort order
             if (w.posY) { groups[key].posYSum += w.posY; groups[key].posYCount++; }
             var entry = { idx: w.idx, name: w.name, dualPos: p.dualPos };
             if (p.side === 'left') groups[key].left.push(entry);
@@ -324,16 +650,9 @@ angular.module('beamng.apps')
             unnamed.push(w);
           }
         });
-        // Compute average posY per group, then determine sort direction from known front/rear types.
-        // In BeamNG the ref node Y direction varies by vehicle, so we can't assume ascending/descending.
-        // Strategy: find avg posY of 'front' named groups vs 'rear' named groups.
-        //   If frontAvgY > rearAvgY → sort descending (front has highest Y)
-        //   If frontAvgY < rearAvgY → sort ascending  (front has lowest Y)
-        //   If neither exists → fall back to descending
         var namedGroups = Object.values(groups);
         var frontSum = 0, frontN = 0, rearSum = 0, rearN = 0;
         namedGroups.forEach(function(g) {
-          // Identify type from label: starts with F=front, R=rear, La=lift, M=mid
           var isFront = /^F/i.test(g.label) && !/^La/i.test(g.label);
           var isRear  = /^R/i.test(g.label);
           var avg = g.posYCount > 0 ? g.posYSum / g.posYCount : null;
@@ -342,7 +661,6 @@ angular.module('beamng.apps')
             if (isRear)  { rearSum  += avg; rearN++;  }
           }
         });
-        // frontAvgY > rearAvgY means descending sort puts front first; otherwise ascending
         var sortDesc = (frontN === 0 || rearN === 0) ? true :
                        (frontSum / frontN) > (rearSum / rearN);
         namedGroups.sort(function(a,b) {
@@ -356,45 +674,30 @@ angular.module('beamng.apps')
           g.right.sort(function(a,b) { return (a.dualPos==='inner'?0:1)-(b.dualPos==='inner'?0:1); });
         });
         if (unnamed.length > 0) {
-          // Split left/right by offset sign (negative=left, positive=right - geometrically unambiguous).
-          // Then group each side by posY proximity: dual pairs (FL+FL2) share the same posY,
-          // different axles have a meaningful posY gap. Pair left_group[i] with right_group[i].
-          // posX is vehicle-local X position from node1: negative = left side, positive = right.
-          // This is more reliable than wheelOffset which varies by jbeam convention.
-          // Fall back to offset sign if posX is 0 (pre-metadata fallback wheels have no posX).
           var leftWheels  = unnamed.filter(function(w) { return w.posX !== undefined ? w.posX <= 0 : w.offset <= 0; });
           var rightWheels = unnamed.filter(function(w) { return w.posX !== undefined ? w.posX >  0 : w.offset >  0; });
           leftWheels.sort(function(a,b)  { return b.posY - a.posY; });
           rightWheels.sort(function(a,b) { return b.posY - a.posY; });
-
           function groupByAxle(wheels) {
             if (!wheels.length) return [];
-            var axleGroups = [[wheels[0]]];
+            var ag = [[wheels[0]]];
             for (var i = 1; i < wheels.length; i++) {
-              var last = axleGroups[axleGroups.length - 1];
+              var last = ag[ag.length - 1];
               var prevPosY = last[last.length - 1].posY;
-              // Wheels within 0.3m posY are on the same axle (groups dual inner/outer pairs).
-              // Tandem axle separation is always >1m, well above this threshold.
-              if (Math.abs(wheels[i].posY - prevPosY) < 0.3) {
-                last.push(wheels[i]);
-              } else {
-                axleGroups.push([wheels[i]]);
-              }
+              if (Math.abs(wheels[i].posY - prevPosY) < 0.3) { last.push(wheels[i]); }
+              else { ag.push([wheels[i]]); }
             }
-            return axleGroups;
+            return ag;
           }
-
           var leftGroups  = groupByAxle(leftWheels);
           var rightGroups = groupByAxle(rightWheels);
           var axleCount   = Math.max(leftGroups.length, rightGroups.length);
           var ai = Object.keys(groups).length;
-
           for (var axi = 0; axi < axleCount; axi++) {
             var lg = leftGroups[axi]  || [];
             var rg = rightGroups[axi] || [];
-            // Sort within each group: outer (more negative/positive offset) first
-            lg.sort(function(a,b) { return a.offset - b.offset; }); // most negative first = outer
-            rg.sort(function(a,b) { return b.offset - a.offset; }); // most positive first = outer
+            lg.sort(function(a,b) { return a.offset - b.offset; });
+            rg.sort(function(a,b) { return b.offset - a.offset; });
             var leftEntry  = lg.map(function(w) { return { idx:w.idx, name:w.name, isDual:w.isDual, dualPos: w.isDual ? 'inner' : 'outer' }; });
             var rightEntry = rg.map(function(w) { return { idx:w.idx, name:w.name, isDual:w.isDual, dualPos: w.isDual ? 'inner' : 'outer' }; });
             leftEntry.sort(function(a,b)  { return (a.dualPos==='outer'?0:1)-(b.dualPos==='outer'?0:1); });
@@ -408,32 +711,20 @@ angular.module('beamng.apps')
       }
 
       // ── Trailer polling ────────────────────────────────────────────
-      // Bridge: engineLua -> trailer:queueLuaCommand -> obj:queueGameEngineLua -> truck:queueLuaCommand -> truck electrics
-      var cachedTruckObjId = 0;
-      var lastTrainQueryTime = 0; // throttle getVehicleTrain calls to ~2/sec
+      var cachedTruckObjId  = 0;
+      var lastTrainQueryTime = 0;
 
       function updateTruckId() {
-        // engineLua can't return values from assignments
-        // Use activeObjectLua to get the truck's own ID from vehicle context
         bngApi.activeObjectLua('electrics.values.tp_truckid=obj:getID()');
       }
 
       function pollTrailers() {
         var el = lastElectrics;
         if (!el) return;
-
-        // Hitch-agnostic train detection: fifthwheel_attachmentState only exists on 5th-wheel
-        // trucks. Pickup trucks, goosenecks, and bumper-pull hitches don't write it.
-        // Instead, always query getVehicleTrain from GE — it works for every hitch type.
-        // Throttle to ~2 calls/sec (poll loop runs at 200ms) to avoid spamming engineLua.
         var now = Date.now();
         var shouldQueryTrain = (now - lastTrainQueryTime) >= 500;
-
         if (shouldQueryTrain) {
           lastTrainQueryTime = now;
-          // Use getVehicleTrain to discover trailer IDs — works for all hitch types
-          // (fifth wheel, gooseneck, bumper pull, etc.). Direction check filters
-          // anything ahead of the truck so player-in-trailer focus doesn't flip ordering.
           bngApi.engineLua(
             'pcall(function() ' +
             '  local pid=be:getPlayerVehicleID(0) ' +
@@ -449,9 +740,7 @@ angular.module('beamng.apps')
             '        local tr=be:getObjectByID(id) ' +
             '        if tr then ' +
             '          local rp=tr:getPosition() ' +
-            '          if (rp-tp):dot(tf)<3 then ' +
-            '            tids[#tids+1]=id ' +
-            '          end ' +
+            '          if (rp-tp):dot(tf)<3 then tids[#tids+1]=id end ' +
             '        end ' +
             '      end ' +
             '    end ' +
@@ -462,9 +751,7 @@ angular.module('beamng.apps')
             '    return (ra-tp):dot(tf)>(rb-tp):dot(tf) ' +
             '  end) ' +
             '  local validTids={} ' +
-            '  for ti,tid in ipairs(tids) do ' +
-            '    validTids[#validTids+1]=tid ' +
-            '  end ' +
+            '  for ti,tid in ipairs(tids) do validTids[#validTids+1]=tid end ' +
             '  truck:queueLuaCommand("electrics.values.tp_trcount="..#validTids) ' +
             '  for ti,tid in ipairs(validTids) do ' +
             '    truck:queueLuaCommand("electrics.values.tp_trid"..ti.."="..tid) ' +
@@ -475,9 +762,6 @@ angular.module('beamng.apps')
             'end)'
           );
         }
-
-        // Step 2: for each known trailer, poll wheels using the stored truck ID.
-        // Runs every poll tick (200ms) regardless of train query throttle.
         var truckObjId = cachedTruckObjId || el.tp_truckid || 0;
         if (!truckObjId) return;
         var count = el.tp_trcount || 0;
@@ -490,7 +774,6 @@ angular.module('beamng.apps')
           } else {
             pollTrailerWheels(trailerObjId, ti, nc, truckObjId);
           }
-          // Bridge the PREVIOUS trailer's fifthwheel state for chain validation
           if (ti > 1) {
             var prevTrailerObjId = el['tp_trid' + (ti - 1)];
             if (prevTrailerObjId) bridgeTrailerFwState(prevTrailerObjId, ti, truckObjId);
@@ -500,51 +783,49 @@ angular.module('beamng.apps')
 
       function bridgeTrailerFwState(trailerObjId, ti, truckObjId) {
         bngApi.engineLua(
-          "pcall(function() " +
-          "local tp_fw=be:getObjectByID(" + trailerObjId + ") " +
-          "if tp_fw then tp_fw:queueLuaCommand([[" +
-            "local fw=electrics.values.fifthwheel_attachmentState " +
-            "local v=fw~=nil and fw or -1 " +
-            "obj:queueGameEngineLua('be:getObjectByID(" + truckObjId + "):queueLuaCommand(\"electrics.values.tp_trfw" + ti + "='..tostring(v)..'\")')" +
-          "]]) end " +
-          "end)"
+          'pcall(function() ' +
+          'local tp_fw=be:getObjectByID(' + trailerObjId + ') ' +
+          'if tp_fw then tp_fw:queueLuaCommand([[' +
+            'local fw=electrics.values.fifthwheel_attachmentState ' +
+            'local v=fw~=nil and fw or -1 ' +
+            'obj:queueGameEngineLua(\'be:getObjectByID(' + truckObjId + '):queueLuaCommand(\\\"electrics.values.tp_trfw' + ti + '=\'..tostring(v)..\'\\\")\')' +
+          ']]) end ' +
+          'end)'
         );
       }
 
       function queryTrailerWheelCount(trailerObjId, ti, truckObjId) {
-        // Trailer Lua: nc concat'd into GE string at trailer-context eval time
-        // Single-quoted Lua strings avoid " escaping; ' .. var .. ' embeds value
         bngApi.engineLua(
-          "pcall(function() " +
-          "local tp_tr5=be:getObjectByID(" + trailerObjId + ") " +
-          "if tp_tr5 then tp_tr5:queueLuaCommand([[" +
-            "local nc=0 while wheels.wheels[nc] do nc=nc+1 end " +
-            "obj:queueGameEngineLua('be:getObjectByID(" + truckObjId + "):queueLuaCommand(\"electrics.values.tp_tnc" + ti + "=' .. nc .. '\")')" +
-          "]]) end " +
-          "end)"
+          'pcall(function() ' +
+          'local tp_tr5=be:getObjectByID(' + trailerObjId + ') ' +
+          'if tp_tr5 then tp_tr5:queueLuaCommand([[' +
+            'local nc=0 while wheels.wheels[nc] do nc=nc+1 end ' +
+            'obj:queueGameEngineLua(\'be:getObjectByID(' + truckObjId + '):queueLuaCommand(\\\"electrics.values.tp_tnc' + ti + '=\' .. nc .. \'\\\")\')' +
+          ']]) end ' +
+          'end)'
         );
       }
 
       function pollTrailerWheels(trailerObjId, ti, nc, truckObjId) {
         for (var wi = 0; wi < nc; wi++) {
           (function(wi_) {
-            var key = "tp_t" + ti + "_pa" + wi_;
+            var key = 'tp_t' + ti + '_pa' + wi_;
             bngApi.engineLua(
-              "pcall(function() " +
-              "local tp_tr4=be:getObjectByID(" + trailerObjId + ") " +
-              "if tp_tr4 then tp_tr4:queueLuaCommand([[" +
-                "local w=wheels.wheels[" + wi_ + "] " +
-                "local pg=w and w.pressureGroupId " +
-                "local env=obj:getEnvPressure() " +
-                "local pa=-1 " +
-                "if pg then " +
-                  "local p=obj:getGroupPressure(pg) " +
-                  "local d=w and w.isTireDeflated " +
-                  "pa=d and 0 or math.max(0,p-env) " +
-                "end " +
-                "obj:queueGameEngineLua('be:getObjectByID(" + truckObjId + "):queueLuaCommand(\"electrics.values." + key + "=' .. pa .. '\")')" +
-              "]]) end " +
-              "end)"
+              'pcall(function() ' +
+              'local tp_tr4=be:getObjectByID(' + trailerObjId + ') ' +
+              'if tp_tr4 then tp_tr4:queueLuaCommand([[' +
+                'local w=wheels.wheels[' + wi_ + '] ' +
+                'local pg=w and w.pressureGroupId ' +
+                'local env=obj:getEnvPressure() ' +
+                'local pa=-1 ' +
+                'if pg then ' +
+                  'local p=obj:getGroupPressure(pg) ' +
+                  'local d=w and w.isTireDeflated ' +
+                  'pa=d and 0 or math.max(0,p-env) ' +
+                'end ' +
+                'obj:queueGameEngineLua(\'be:getObjectByID(' + truckObjId + '):queueLuaCommand(\\\"electrics.values.' + key + '=\' .. pa .. \'\\\")\')' +
+              ']]) end ' +
+              'end)'
             );
           })(wi);
         }
@@ -552,59 +833,51 @@ angular.module('beamng.apps')
 
       function queryTrailerMetaID(trailerObjId, count, tid, truckObjId) {
         bngApi.engineLua(
-          "pcall(function() " +
-          "local tp_tr2=be:getObjectByID(" + trailerObjId + ") " +
-          "if tp_tr2 then tp_tr2:queueLuaCommand([=[" +
-            "local rn=v.data.refNodes and v.data.refNodes[0] " +
-            "local refY=rn and obj:getNodePosition(rn.ref).y or 0 " +
-            "local refX=rn and obj:getNodePosition(rn.ref).x or nil " +
-            // If no refNode, compute midpoint of all wheel X positions as center reference
-            "if not refX then " +
-              "local xmin,xmax=math.huge,-math.huge " +
-              "for i=0," + (count-1) + " do " +
-                "local w=wheels.wheels[i] " +
-                "local np=w and obj:getNodePosition(w.node1) " +
-                "if np then xmin=math.min(xmin,np.x) xmax=math.max(xmax,np.x) end " +
-              "end " +
-              "refX=(xmin~=math.huge) and (xmin+xmax)/2 or 0 " +
-            "end " +
-            "local cmd='electrics.values.tp_tmeta_" + tid + "=1 ' " +
-            "for i=0," + (count-1) + " do " +
-              "local w=wheels.wheels[i] " +
-              "local np=w and obj:getNodePosition(w.node1) " +
-              "cmd=cmd..'electrics.values.tp_tmn1_" + tid + "_'..i..'='..(w and w.node1 or -1)..' ' " +
-              "cmd=cmd..'electrics.values.tp_tmn2_" + tid + "_'..i..'='..(w and w.node2 or -1)..' ' " +
-              "cmd=cmd..'electrics.values.tp_tmoff_" + tid + "_'..i..'='..(w and w.wheelOffset or 0)..' ' " +
-              "cmd=cmd..'electrics.values.tp_tmpos_" + tid + "_'..i..'='..(np and (np.y-refY) or 0)..' ' " +
-              "cmd=cmd..'electrics.values.tp_tmposx_" + tid + "_'..i..'='..(np and (np.x-refX) or 0)..' ' " +
-              "local vw2=v.data.wheels and v.data.wheels[i] " +
-              "local nm2=(vw2 and (vw2.name or '')) or '' " +
-              "local isd=(nm2:match('[LRlr][LRlr]$') or nm2:match('[LRlr][2-9]$')) and 1 or 0 " +
-              "cmd=cmd..'electrics.values.tp_tmisd_" + tid + "_'..i..'='..isd..' ' " +
-            "end " +
-            "obj:queueGameEngineLua('be:getObjectByID(" + truckObjId + "):queueLuaCommand(\"' .. cmd .. '\")')" +
-            "]=]) end " +
-            "end)"
-         );
+          'pcall(function() ' +
+          'local tp_tr2=be:getObjectByID(' + trailerObjId + ') ' +
+          'if tp_tr2 then tp_tr2:queueLuaCommand([=[' +
+            'local rn=v.data.refNodes and v.data.refNodes[0] ' +
+            'local refY=rn and obj:getNodePosition(rn.ref).y or 0 ' +
+            'local refX=rn and obj:getNodePosition(rn.ref).x or nil ' +
+            'if not refX then ' +
+              'local xmin,xmax=math.huge,-math.huge ' +
+              'for i=0,' + (count-1) + ' do ' +
+                'local w=wheels.wheels[i] ' +
+                'local np=w and obj:getNodePosition(w.node1) ' +
+                'if np then xmin=math.min(xmin,np.x) xmax=math.max(xmax,np.x) end ' +
+              'end ' +
+              'refX=(xmin~=math.huge) and (xmin+xmax)/2 or 0 ' +
+            'end ' +
+            'local cmd="electrics.values.tp_tmeta_' + tid + '=1 " ' +
+            'for i=0,' + (count-1) + ' do ' +
+              'local w=wheels.wheels[i] ' +
+              'local np=w and obj:getNodePosition(w.node1) ' +
+              'cmd=cmd.."electrics.values.tp_tmn1_' + tid + '_"..i.."="..(w and w.node1 or -1).." " ' +
+              'cmd=cmd.."electrics.values.tp_tmn2_' + tid + '_"..i.."="..(w and w.node2 or -1).." " ' +
+              'cmd=cmd.."electrics.values.tp_tmoff_' + tid + '_"..i.."="..(w and w.wheelOffset or 0).." " ' +
+              'cmd=cmd.."electrics.values.tp_tmpos_' + tid + '_"..i.."="..(np and (np.y-refY) or 0).." " ' +
+              'cmd=cmd.."electrics.values.tp_tmposx_' + tid + '_"..i.."="..(np and (np.x-refX) or 0).." " ' +
+              'local vw2=v.data.wheels and v.data.wheels[i] ' +
+              'local nm2=(vw2 and (vw2.name or "")) or "" ' +
+              'local isd=(nm2:match("[LRlr][LRlr]$") or nm2:match("[LRlr][2-9]$")) and 1 or 0 ' +
+              'cmd=cmd.."electrics.values.tp_tmisd_' + tid + '_"..i.."="..isd.." " ' +
+            'end ' +
+            'obj:queueGameEngineLua(\'be:getObjectByID(' + truckObjId + '):queueLuaCommand(\\\"\'..cmd..\'\\\")\')' +
+            ']=]) end ' +
+            'end)'
+        );
       }
 
-
-
-
       function processTrailerElectrics(el) {
-        if (focusedOnTrailer) return; // focused on a trailer vehicle - suppress false train readings
-        if (Date.now() < trailerSuppressUntil) return; // suppressed after trailer clear - wait for fresh bridge data
+        if (focusedOnTrailer) return;
+        if (Date.now() < trailerSuppressUntil) return;
         var truckObjId = cachedTruckObjId || el.tp_truckid || 0;
         var count = el.tp_trcount || 0;
-        // Chain validation using bridged fw states (tp_trfw{ti} written by bridgeTrailerFwState).
-        // fw=0 → trailer disconnected from chain → add to sticky disabledTrailerIds set.
-        // fw=1 → reconnected → remove from set. fw=-1 or null → no fw, ignore.
         for (var ci = 2; ci <= count; ci++) {
           var fw = el['tp_trfw' + ci];
           if (fw == null) continue;
           var fwNum = Number(fw);
           var fwTid = String(el['tp_trid' + ci] || ci);
-          console.log('FW CHAIN ci='+ci+' tid='+fwTid+' fw='+fwNum+' conn='+!!connectedTrailerIds[fwTid]+' dis='+!!disabledTrailerIds[fwTid]);
           if (fwNum === 1) {
             connectedTrailerIds[fwTid] = true;
             delete disabledTrailerIds[fwTid];
@@ -612,17 +885,13 @@ angular.module('beamng.apps')
             disabledTrailerIds[fwTid] = true;
           }
         }
-        // Truncate count at first disabled trailer
         for (var di = 2; di <= count; di++) {
           var diTid = String(el['tp_trid' + di] || di);
           if (disabledTrailerIds[diTid]) { count = di - 1; break; }
         }
-        // Detect coupling/uncoupling: if count dropped, fast-clear missing trailers
         var countDropped = count < lastTrailerCount;
         lastTrailerCount = count;
-
         if (count === 0) {
-          // Immediately wipe all trailers — no timer needed, count is definitively 0
           if (Object.keys(trailerData).length > 0) {
             Object.keys(trailerData).forEach(function(tid) {
               if (trailerData[tid] && trailerData[tid]._staleTimer) clearTimeout(trailerData[tid]._staleTimer);
@@ -639,31 +908,27 @@ angular.module('beamng.apps')
           var nc    = el['tp_tnc' + ti] || 0;
           if (!objId) continue;
           if (!trailerData[tid]) {
-            knownTrailerIds[tid] = true; // remember this ID is a trailer
+            knownTrailerIds[tid] = true;
             trailerData[tid] = { wCount: 0, rawPa: [], axleGroups: [], metaRead: false, order: ti };
             changed = true;
           }
           var td = trailerData[tid];
-          // Count wheels by scanning tp_t{ti}_pa{wi} keys if tp_tnc hasn't arrived
           if (!nc) {
             var detectedNc = 0;
             while (el['tp_t' + ti + '_pa' + detectedNc] != null) detectedNc++;
             nc = detectedNc;
           }
-          // Update wheel count when it arrives - only grow, never shrink (guards against 0 blips)
           if (nc && nc !== td.wCount) {
             td.wCount = nc;
             td.rawPa  = new Array(nc).fill(0);
             td.metaRead = false;
             if (truckObjId) queryTrailerMetaID(objId, nc, tid, truckObjId);
-            // Immediately build positional axle groups so wheels show right away
             var fbImmediate = [];
             for (var k = 0; k < nc; k++) {
               var axle = Math.floor(k / 2);
               fbImmediate.push({ idx:k, name:'', node1:axle*10, node2:axle*10+1, offset:(k%2===0?1:-1), posY:axle });
             }
             td.axleGroups = buildAxleGroups(fbImmediate);
-            console.log("TD BUILD tid="+tid+" nc="+nc);
             changed = true;
           }
           if (!nc) continue;
@@ -677,45 +942,27 @@ angular.module('beamng.apps')
               wheelMeta.push({
                 idx: j, name: '',
                 isDual: (el['tp_tmisd_' + tid + '_' + j] === 1),
-                node1: el['tp_tmn1_' + tid + '_' + j] || 0,
-                node2: el['tp_tmn2_' + tid + '_' + j] || 0,
+                node1:  el['tp_tmn1_'  + tid + '_' + j] || 0,
+                node2:  el['tp_tmn2_'  + tid + '_' + j] || 0,
                 offset: el['tp_tmoff_' + tid + '_' + j] || 0,
                 posY:   el['tp_tmpos_' + tid + '_' + j] || 0,
-                posX:   el['tp_tmposx_' + tid + '_' + j] || 0,
+                posX:   el['tp_tmposx_'+ tid + '_' + j] || 0,
               });
             }
-            console.log("TRAILER META tid="+tid+" nc="+nc+" wheels="+wheelMeta.map(function(w){return "w"+w.idx+"(posX="+w.posX+",posY="+w.posY.toFixed(2)+",off="+w.offset.toFixed(2)+",isDual="+w.isDual+")";}).join(" "));
-            var newGroups = buildAxleGroups(wheelMeta);
-            console.log("TRAILER GROUPS: "+newGroups.length+" "+newGroups.map(function(g){return g.label+"(L"+g.left.length+"R"+g.right.length+")";}).join(" "));
-            var newTotal = newGroups.reduce(function(s,a){return s+a.left.length+a.right.length;},0);
-            var newMinSide = newGroups.length > 0 ? Math.min.apply(null, newGroups.map(function(a){
-              return Math.min(a.left.length, a.right.length);
-            })) : 0;
-            var oldTotal = td.axleGroups.reduce(function(s,a){return s+a.left.length+a.right.length;},0);
-            var oldMinSide = td.axleGroups.length > 0 ? Math.min.apply(null, td.axleGroups.map(function(a){
-              return Math.min(a.left.length, a.right.length);
-            })) : 0;
-            // Adopt new groups only if they are at least as balanced as what we have.
-            // A result with any L0 or R0 axle is worse than an L1R1 layout.
-            var newIsBetter = (newTotal >= td.wCount) && (newMinSide >= 1) &&
-                              (newMinSide >= oldMinSide);
-            if (newIsBetter) {
-              td.axleGroups = newGroups;
-              changed = true;
-            } else if (oldTotal === 0 && newTotal > 0) {
-              // Nothing was there before - take whatever we have
-              td.axleGroups = newGroups;
-              changed = true;
-            }
+            var newGroups   = buildAxleGroups(wheelMeta);
+            var newTotal    = newGroups.reduce(function(s,a){return s+a.left.length+a.right.length;},0);
+            var newMinSide  = newGroups.length > 0 ? Math.min.apply(null, newGroups.map(function(a){ return Math.min(a.left.length, a.right.length); })) : 0;
+            var oldTotal    = td.axleGroups.reduce(function(s,a){return s+a.left.length+a.right.length;},0);
+            var oldMinSide  = td.axleGroups.length > 0 ? Math.min.apply(null, td.axleGroups.map(function(a){ return Math.min(a.left.length, a.right.length); })) : 0;
+            var newIsBetter = (newTotal >= td.wCount) && (newMinSide >= 1) && (newMinSide >= oldMinSide);
+            if (newIsBetter) { td.axleGroups = newGroups; changed = true; }
+            else if (oldTotal === 0 && newTotal > 0) { td.axleGroups = newGroups; changed = true; }
             td.metaRead = true;
           }
-          // Fallback: if we have pressure data but no metadata after a while, use positional grouping
           if (!td.metaRead && !td.metaTimer) {
             td.metaTimer = setTimeout(function() {
               if (!td.metaRead && td.wCount > 0) {
                 var fb = [];
-                // Group wheels into axle pairs: even=left, odd=right, posY spreads axles
-                var axleCount = Math.ceil(td.wCount / 2);
                 for (var k = 0; k < td.wCount; k++) {
                   var axle = Math.floor(k / 2);
                   fb.push({ idx:k, name:'', node1:axle*10, node2:axle*10+1, offset:(k%2===0?1:-1), posY:axle });
@@ -727,9 +974,6 @@ angular.module('beamng.apps')
             }, 1500);
           }
         }
-        // Clean up trailers no longer in the train.
-        // Timeout-based: start a short timer when an entry goes missing, cancel if it comes back.
-        // Use 300ms on count drop (likely genuine disconnect), 800ms otherwise (bridge lag guard).
         Object.keys(trailerData).forEach(function(tid) {
           var found = false;
           for (var ti = 1; ti <= count; ti++) { if (String(el['tp_trid' + ti]) === tid) { found = true; break; } }
@@ -737,10 +981,7 @@ angular.module('beamng.apps')
             if (trailerData[tid] && !trailerData[tid]._staleTimer) {
               trailerData[tid]._staleTimer = setTimeout((function(t) {
                 return function() {
-                  if (trailerData[t]) {
-                    delete trailerData[t];
-                    scope.$evalAsync(refreshDisplay);
-                  }
+                  if (trailerData[t]) { delete trailerData[t]; scope.$evalAsync(refreshDisplay); }
                 };
               })(tid), countDropped ? 300 : 800);
             }
@@ -757,6 +998,17 @@ angular.module('beamng.apps')
       // ── Lua helpers ────────────────────────────────────────────────
       function detectWheels() {
         bngApi.activeObjectLua('local n=0 while wheels.wheels[n] do n=n+1 end electrics.values.tp_newcount=n');
+      }
+
+      function probeDepAndName() {
+        // Probe inflator controller and vehicle name
+        // Wear detection is handled by tireThermalData stream (depThermals)
+        bngApi.activeObjectLua(
+          'local inf=controller.getControllersByType("rlsTirePressureControl") ' +
+          'electrics.values.tp_hasinflator=(inf and inf[1]) and 1 or 0 ' +
+          'local nm=tostring(v.data.information and v.data.information.name or "") ' +
+          'electrics.values.tp_vidname=nm'
+        );
       }
 
       function readWheelMeta(count) {
@@ -785,7 +1037,9 @@ angular.module('beamng.apps')
           lua += 'local p=pg and obj:getGroupPressure(pg) or env ';
           lua += 'local d=w and w.isTireDeflated ';
           lua += 'electrics.values["tp_pa'+i+'"]=d and 0 or math.max(0,p-env) ';
-          lua += 'electrics.values["tp_tc'+i+'"]=w and w.lastTemperature or 25 ';
+          // Tire temp: prefer treadTemperature (more realistic), fall back to lastTemperature
+          lua += 'electrics.values["tp_tc'+i+'"]=w and (w.treadTemperature or w.lastTemperature) or 25 ';
+          lua += 'electrics.values["tp_bt'+i+'"]=w and w.brakeSurfaceTemperature or 25 ';
         }
         bngApi.activeObjectLua(lua);
       }
@@ -803,13 +1057,14 @@ angular.module('beamng.apps')
 
       // ── Streams ────────────────────────────────────────────────────
       var pollInterval = null;
-      var pollStartTime = 0; // timestamp when poll last started, for isDef=false grace period
+      var pollStartTime = 0;
       var streamsList  = ['electrics', 'tireThermalData'];
       StreamsManager.add(streamsList);
 
       scope.$on('$destroy', function() {
         StreamsManager.remove(streamsList);
         stopPoll();
+        if (toastTimer) clearTimeout(toastTimer);
       });
 
       function stopPoll() {
@@ -817,47 +1072,53 @@ angular.module('beamng.apps')
         if (metaTimer)    { clearTimeout(metaTimer);     metaTimer    = null; }
       }
 
-      function startPoll() {
-        if (pollInterval) return;
-        pollStartTime = Date.now();
-        scope.visible = true;
-        autoDetected  = false;
-        metaRead      = false;
-        wCount        = 0;
-        rawPa         = [];
-        rawTemp       = [];
-        wheelStatus   = {};
-        axleGroups    = [];
-         scope.axles    = [];
-         // trailerData intentionally NOT cleared here - trailer may already be coupled.
-         // Debounce and stale cleanup handle genuine disconnects. Wiping here causes the
-         // post-coupling blip: a vehicle event restarts the poll (pollInterval=null) and
-         // the next startPoll() was deleting the just-built trailerData entry.
+      function restartPoll() {
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+          beginPollLoop();
+        }
+      }
 
-         // Bounce the electrics stream to force a fresh snapshot from the new vehicle.
-         // Without this, RLS loaners (swapped via VehicleChange) may not deliver
-         // updated electrics until the stream is re-registered.
-         StreamsManager.remove(streamsList);
-         StreamsManager.add(streamsList);
-
-         // Explicitly set activeObject to the player vehicle before detectWheels.
-         // On RLS loaner spawns, activeObject may not have switched yet even though
-         // streamsUpdate is already delivering the new vehicle's electrics.
-         
-         detectWheels();
-         updateTruckId();
-         // scope.trailerSections intentionally not cleared - stays visible until processTrailerElectrics updates it
+      function beginPollLoop() {
+        var rate = Number(scope.settings.refreshRate) || 1000;
         pollInterval = setInterval(function() {
           var el = lastElectrics;
-          detectWheels(); // always retry before el check - fires even when lastElectrics is null (e.g. RLS loaners post-softReset)
+          detectWheels();
+          probeDepAndName();
           if (!el) return;
+
+          // Vehicle name / unicycle check
+          if (el.tp_vidname !== undefined) {
+            var vname = String(el.tp_vidname || '').toLowerCase();
+            var wasUnicycle = isUnicycle;
+            isUnicycle = vname.indexOf('unicycle') !== -1;
+            if (wasUnicycle !== isUnicycle) scope.$evalAsync(updateVisibility);
+          }
+
+          // Dependency detection
+          var hadInflator = scope.depInflator;
+          var hadNodeDmg  = scope.depNodeDmg;
+          if (el.tp_hasinflator != null) scope.depInflator = el.tp_hasinflator === 1;
+          if (hadInflator !== scope.depInflator || hadNodeDmg !== scope.depNodeDmg) {
+            scope.$evalAsync(updateVisibility);
+          }
+
+          // Vehicle ID for per-vehicle prefs
           if (el.tp_vidname && el.tp_vidname !== currentVehicleId) {
             currentVehicleId = el.tp_vidname;
-            scope.$evalAsync(function() { loadPrefs(currentVehicleId); });
+            scope.$evalAsync(function() {
+              loadVehicle(currentVehicleId);
+              buildSettings();
+              syncDerivedLabels();
+              refreshDisplay();
+            });
           }
+
+          // Wheel detection
           var detected = el.tp_newcount;
           if (detected && detected !== wCount) {
-            wCount = detected; rawPa = new Array(wCount).fill(0); rawTemp = new Array(wCount).fill(null);
+            wCount = detected; rawPa = new Array(wCount).fill(0); rawTemp = new Array(wCount).fill(null); rawBrakeTemp = new Array(wCount).fill(25);
             wheelStatus = {}; axleGroups = []; metaRead = false; autoDetected = false;
             if (metaTimer) { clearTimeout(metaTimer); metaTimer = null; }
             autoDetectPreset(wCount);
@@ -872,6 +1133,8 @@ angular.module('beamng.apps')
               }
             }, 2000);
           }
+
+          // Wheel meta
           if (!metaRead && wCount > 0 && el.tp_metamark >= wCount) {
             var ok = true; var wheelMeta = [];
             for (var i = 0; i < wCount; i++) {
@@ -880,32 +1143,52 @@ angular.module('beamng.apps')
             }
             if (ok) {
               axleGroups = buildAxleGroups(wheelMeta); metaRead = true;
-              var _names = wheelMeta.map(function(w){return w.name||'?';}).join(',');
-              console.log("TRUCK WHEEL NAMES: "+_names);
-              console.log("TRUCK AXLES built: "+axleGroups.length+" "+axleGroups.map(function(a){return a.label+"(L"+a.left.length+"R"+a.right.length+"sortKey="+a.sortKey+")";}).join(" "));
               if (metaTimer) { clearTimeout(metaTimer); metaTimer = null; }
               scope.$evalAsync(refreshDisplay);
             }
           }
+
+          // Heavy preset auto-detect
           if (!autoDetected && el.tp_isheavy != null) {
             autoDetected = true;
             if (el.tp_isheavy === 1) {
-              pIdx = PRESET_CYCLE.indexOf('HEAVY');
-              scope.$evalAsync(function() { scope.presetKey='HEAVY'; scope.presetLabel='HEAVY'; savePrefs(); });
+              scope.$evalAsync(function() { scope.setPreset(scope.presetCycle.indexOf('HEAVY')); });
             }
           }
+
           if (wCount > 0) { setupElectrics(wCount); }
           updateTruckId();
           pollTrailers();
-        }, 200);
+        }, rate);
+      }
+
+      function startPoll() {
+        if (pollInterval) return;
+        pollStartTime = Date.now();
+        rawVisible    = true;
+        autoDetected  = false;
+        metaRead      = false;
+        wCount        = 0;
+        rawPa         = [];
+        rawTemp       = [];
+        rawBrakeTemp  = [];
+        wheelStatus   = {};
+        axleGroups    = [];
+        scope.axles   = [];
+        StreamsManager.remove(streamsList);
+        StreamsManager.add(streamsList);
+        detectWheels();
+        probeDepAndName();
+        updateTruckId();
+        updateVisibility();
+        maybeShowToast();
+        beginPollLoop();
       }
 
       scope.$on('streamsUpdate', function(event, data) {
         if (!data.electrics) return;
         lastElectrics = data.electrics;
         if (lastElectrics.tp_truckid) cachedTruckObjId = lastElectrics.tp_truckid;
-        // isDef: vehicle electrics are live. Career mode may not populate maxrpm/ignitionLevel
-        // immediately after purchase - check additional keys as fallback.
         var isDef = lastElectrics.maxrpm        != undefined ||
                     lastElectrics.ignitionLevel != undefined ||
                     lastElectrics.wheelspeed    != undefined ||
@@ -914,14 +1197,34 @@ angular.module('beamng.apps')
         if (data.tireThermalData && data.tireThermalData.wheels) {
           var rawT = data.tireThermalData.wheels; thermals = {};
           var tKeys = Object.keys(rawT);
-          for (var ti = 0; ti < tKeys.length; ti++) { thermals[tKeys[ti]] = rawT[tKeys[ti]]; thermals[ti] = rawT[tKeys[ti]]; }
-        } else { thermals = {}; }
-        if (isDef && !pollInterval) { console.log("STREAM startPoll (isDef=true)"); startPoll(); }
+          if (tKeys.length > 0) {
+            if (!scope.depThermals) scope.$evalAsync(function() { scope.depThermals = true; });
+            for (var ti = 0; ti < tKeys.length; ti++) {
+              var tKey = tKeys[ti];
+              var tVal = rawT[tKey];
+              // Key by stream key (may be numeric string like "0")
+              thermals[tKey] = tVal;
+              // Key by numeric value of stream key so thArr[w.idx] works
+              var tKeyNum = Number(tKey);
+              if (!isNaN(tKeyNum)) { thermals[tKeyNum] = tVal; }
+              // Key by name field inside the therm object (e.g. "FL", "FR")
+              if (tVal && tVal.name) { thermals[tVal.name] = tVal; }
+              // Key by wheelIndex if present
+              if (tVal && tVal.wheelIndex != null) { thermals[tVal.wheelIndex] = tVal; }
+            }
+          } else {
+            thermals = {};
+          }
+        } else {
+          thermals = {};
+          if (scope.depThermals) scope.$evalAsync(function() { scope.depThermals = false; });
+        }
+        if (isDef && !pollInterval) { startPoll(); }
         else if (!isDef && pollInterval && (Date.now() - pollStartTime > 2000)) {
-          console.log("STREAM isDef=false hiding app");
-          stopPoll(); scope.visible = false;
+          stopPoll();
+          rawVisible = false;
+          updateVisibility();
           wCount = 0; axleGroups = []; scope.axles = [];
-          // trailerSections preserved - trailer still attached
         }
         if (isDef) processTrailerElectrics(lastElectrics);
         if (isDef && wCount > 0) {
@@ -931,6 +1234,8 @@ angular.module('beamng.apps')
             if (pa != null && pa !== rawPa[i]) { rawPa[i] = pa; changed = true; }
             var tc = lastElectrics['tp_tc'+i];
             if (tc != null && tc !== rawTemp[i]) { rawTemp[i] = tc; changed = true; }
+            var bt = lastElectrics['tp_bt'+i];
+            if (bt != null && bt !== rawBrakeTemp[i]) { rawBrakeTemp[i] = bt; changed = true; }
           }
           if (changed || data.tireThermalData) scope.$evalAsync(refreshDisplay);
         }
@@ -938,70 +1243,61 @@ angular.module('beamng.apps')
 
       // ── Reset handlers ─────────────────────────────────────────────
       function fullReset() {
-        console.log('fullReset called');
-        stopPoll(); lastElectrics = null;
+        stopPoll();
+        lastElectrics = null;
         wCount = 0; autoDetected = false; metaRead = false;
-        rawPa = []; rawTemp = []; wheelStatus = {}; thermals = {}; axleGroups = [];
+        rawPa = []; rawTemp = []; rawBrakeTemp = []; wheelStatus = {}; thermals = {}; axleGroups = [];
         lastTrailerCount = 0;
         focusedOnTrailer = false;
-        focusedVehicleId = null; // clear so detectWheels doesn't target stale vehicle before next VehicleFocusChanged
+        focusedVehicleId = null;
         trailerSuppressUntil = 0;
         disabledTrailerIds = {};
         connectedTrailerIds = {};
-        scope.axles = []; scope.visible = false;
+        isUnicycle = false;
+        rawVisible = false;
+        scope.depThermals = false;
+        scope.axles = [];
+        updateVisibility();
       }
 
       function softReset(clearTrailers) {
-        console.log('softReset called clearTrailers=' + !!clearTrailers);
         if (metaTimer) { clearTimeout(metaTimer); metaTimer = null; }
-        // Only wipe wheel data if we don't already have it - preserves detection that
-        // happened before VehicleFocusChanged fires (e.g. RLS loaners with late focus events)
         if (!metaRead) {
           wCount = 0; autoDetected = false;
-          rawPa = []; rawTemp = []; wheelStatus = {}; axleGroups = []; scope.axles = [];
+          rawPa = []; rawTemp = []; rawBrakeTemp = []; wheelStatus = {}; axleGroups = []; scope.axles = [];
         }
         metaRead = false;
         lastTrailerCount = 0;
         if (clearTrailers) {
-          // Focus changed - wipe trailers AND lastElectrics so stale tp_trcount can't rebuild them.
-          // Also set a suppression window (700ms) so the next few streamsUpdates don't re-flash
-          // the stale bridge-written tp_trcount before pollTrailers() has re-queried it.
           Object.keys(trailerData).forEach(function(tid) {
             if (trailerData[tid] && trailerData[tid]._staleTimer) clearTimeout(trailerData[tid]._staleTimer);
           });
           trailerData = {};
           disabledTrailerIds = {};
           connectedTrailerIds = {};
-          // Don't null lastElectrics - poll tick needs it to read tp_newcount for late-init vehicles.
-          // Instead, scrub stale trailer keys so pollTrailers() can't rebuild from old data.
           if (lastElectrics) {
             delete lastElectrics.tp_trcount;
             delete lastElectrics.tp_truckid;
-            delete lastElectrics.tp_newcount; // also clear wheel count so redetect triggers
+            delete lastElectrics.tp_newcount;
           }
-          cachedTruckObjId = 0; // invalidate truck ID so bridge queries restart cleanly
+          cachedTruckObjId = 0;
           trailerSuppressUntil = Date.now() + 700;
-          // Bounce stream to force fresh electrics from the new vehicle.
-          // Without this the poll keeps reading stale data from the previous loaner.
           StreamsManager.remove(streamsList);
           StreamsManager.add(streamsList);
           scope.$evalAsync(refreshDisplay);
         }
-        // Don't clear focusedOnTrailer here - VehicleFocusChanged manages it
       }
 
-      scope.$on('VehicleChange', function(e,d){ console.log('EV: VehicleChange'); fullReset(); });
-      scope.$on('VehicleReload', function(e,d){ console.log('EV: VehicleReload'); fullReset(); });
-      scope.$on('VehicleObjectChanged', function(e,d){ console.log('EV: VehicleObjectChanged'); softReset(false); });
-      scope.$on('VehicleConfigChange', function(e,d){ console.log('EV: VehicleConfigChange'); softReset(false); });
-      scope.$on('VehicleReset', function(e,d){ console.log('EV: VehicleReset'); softReset(false); });
-      scope.$on('VehicleFocusChanged', function(event, data) {
+      scope.$on('VehicleChange',        function() { fullReset(); });
+      scope.$on('VehicleReload',        function() { fullReset(); });
+      scope.$on('VehicleObjectChanged', function() { softReset(false); });
+      scope.$on('VehicleConfigChange',  function() { softReset(false); });
+      scope.$on('VehicleReset',         function() { softReset(false); });
+      scope.$on('VehicleFocusChanged',  function(event, data) {
         var newId = data && data.id ? String(data.id) : null;
-        console.log('EV: VehicleFocusChanged id=' + newId);
         focusedVehicleId = newId;
         focusedOnTrailer = !!(newId && knownTrailerIds[newId]);
         if (focusedOnTrailer) {
-          // Immediately clear all trailers - focused vehicle is a trailer, train readings are unreliable
           Object.keys(trailerData).forEach(function(tid) {
             if (trailerData[tid] && trailerData[tid]._staleTimer) clearTimeout(trailerData[tid]._staleTimer);
             delete trailerData[tid];
@@ -1011,7 +1307,6 @@ angular.module('beamng.apps')
         }
         if (!newId) { fullReset(); } else {
           softReset(true);
-          // Retry detectWheels a few times after focus change to catch late-init vehicles.
           var retryDetect = function() { detectWheels(); };
           setTimeout(function() { if (wCount === 0 && focusedVehicleId === newId) retryDetect(); }, 200);
           setTimeout(function() { if (wCount === 0 && focusedVehicleId === newId) retryDetect(); }, 500);
@@ -1019,6 +1314,7 @@ angular.module('beamng.apps')
           setTimeout(function() { if (wCount === 0 && focusedVehicleId === newId) retryDetect(); }, 2000);
         }
       });
+
     }
   };
 }]);
